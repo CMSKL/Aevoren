@@ -1,0 +1,7 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>Aevoren 后台浏览器</title><link rel="stylesheet" href="popup.css"></head>
+<body><h1>后台浏览器</h1><p>只共享你选择的标签页。连接不会切换标签页或移动系统鼠标。</p>
+<form id="pair"><label>本机地址<input id="endpoint" placeholder="从 Aevoren 设置中复制" required></label><label>配对码<input id="code" autocomplete="off" required></label><button>配对</button></form>
+<div class="actions"><button id="reconnect">连接已配对的 Aevoren</button><button id="forget">解除配对</button></div>
+<p id="status" role="status"></p><button id="share">共享当前标签页</button><ul id="targets"></ul><p id="error" role="alert"></p>
+<script type="module" src="popup.mjs"></script></body></html>

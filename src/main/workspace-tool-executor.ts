@@ -1,0 +1,512 @@
+import { createHash, randomUUID } from "node:crypto";
+import { constants } from "node:fs";
+import { link, lstat, open, readdir, realpath, unlink } from "node:fs/promises";
+import { join, posix } from "node:path";
+import type { Stats } from "node:fs";
+import type { ComputationToolRequest, DeviceToolRequest, NetworkToolRequest, ToolInvocation, ToolRequest, WorkspaceToolRequest } from "@shared/contracts";
+import type { AppRepository } from "./database";
+import { asAppError, AevorenBotError, type ErrorCode } from "./errors";
+import type { WorkspaceService } from "./workspace-service";
+import type { NetworkToolExecutor } from "./network-tool-executor";
+import type { McpService } from "./mcp-service";
+import type { DeviceToolExecutor } from "./device-tool-executor";
+import { containsLikelySecret } from "./memory-safety";
+
+const MAX_SEARCH_FILES = 2_000;
+const MAX_SEARCH_BYTES = 20 * 1_048_576;
+const MAX_SEARCH_FILE_BYTES = 1_048_576;
+const MAX_SEARCH_DURATION_MS = 5_000;
+const MAX_PREVIEW_CHARACTERS = 240;
+const MAX_WRITE_BYTES = 256 * 1_024;
+
+type ResultMetadata = Record<string, string | number | boolean | null>;
+
+function summarizeCsv(text: string): { rowCount: number; numericSums: Record<string, number> } | null {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let quoted = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index]!;
+    if (quoted) {
+      if (character === '"' && text[index + 1] === '"') { field += '"'; index += 1; }
+      else if (character === '"') quoted = false;
+      else field += character;
+      continue;
+    }
+    if (character === '"' && field.length === 0) quoted = true;
+    else if (character === ",") { row.push(field); field = ""; }
+    else if (character === "\n") { row.push(field.replace(/\r$/u, "")); rows.push(row); row = []; field = ""; }
+    else field += character;
+    if (rows.length > 10_001 || row.length > 200) return null;
+  }
+  if (quoted) return null;
+  if (field.length > 0 || row.length > 0) { row.push(field.replace(/\r$/u, "")); rows.push(row); }
+  while (rows.length > 0 && rows.at(-1)?.every((value) => value === "")) rows.pop();
+  const header = rows.shift();
+  if (!header?.length || new Set(header).size !== header.length || header.some((name) => !name.trim())) return null;
+  const numericSums: Record<string, number> = {};
+  header.forEach((name, column) => {
+    const values = rows.map((values) => values[column] ?? "").filter((value) => value.trim() !== "");
+    if (values.length !== rows.length || values.some((value) => !/^-?\d+(?:\.\d+)?$/u.test(value.trim()))) return;
+    const numbers = values.map(Number);
+    const sum = numbers.reduce((total, value) => total + value, 0);
+    if (numbers.every(Number.isFinite) && Number.isFinite(sum) && Math.abs(sum) <= Number.MAX_SAFE_INTEGER) numericSums[name.trim()] = sum;
+  });
+  return { rowCount: rows.length, numericSums };
+}
+
+export type WorkspaceToolExecutionResult = {
+  invocation: ToolInvocation;
+  content: string;
+  images?: import("./model-image").ModelImageAttachment[];
+  modelText?: import("./model-image").ModelTextAttachment;
+};
+
+function sameIdentity(left: Stats, right: Stats): boolean {
+  return left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mode === right.mode &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs;
+}
+
+function cancelled(): AevorenBotError {
+  return new AevorenBotError("TOOL_EXECUTION_CANCELLED");
+}
+
+function checkCancellation(signal: AbortSignal): void {
+  if (signal.aborted) throw cancelled();
+}
+
+function stableError(error: unknown): AevorenBotError {
+  if (error instanceof AevorenBotError) return error;
+  const mapped = asAppError(error);
+  if (mapped.code.startsWith("CONNECTOR_") || mapped.code === "TOOL_EXECUTION_CANCELLED") return new AevorenBotError(mapped.code as ErrorCode, undefined, undefined, mapped.details);
+  return new AevorenBotError("TOOL_EXECUTION_FAILED");
+}
+
+function digestResult(content: string): string {
+  return createHash("sha256").update(content, "utf8").digest("hex");
+}
+
+function compareNames(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function decodeUtf8(buffer: Buffer): string {
+  if (buffer.includes(0)) throw new AevorenBotError("WORKSPACE_BINARY_UNSUPPORTED");
+  const firstPossibleBoundary = Math.max(0, buffer.length - 3);
+  for (let end = buffer.length; end >= firstPossibleBoundary; end -= 1) {
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, end));
+    } catch {
+      // A bounded read can stop inside one UTF-8 code point. Only trim that suffix.
+    }
+  }
+  throw new AevorenBotError("WORKSPACE_BINARY_UNSUPPORTED");
+}
+
+async function stableDirectoryEntries(path: string, signal: AbortSignal) {
+  try {
+    checkCancellation(signal);
+    const before = await lstat(path);
+    if (!before.isDirectory() || before.isSymbolicLink()) {
+      throw new AevorenBotError("WORKSPACE_TARGET_CHANGED");
+    }
+    const entries = await readdir(path, { withFileTypes: true });
+    checkCancellation(signal);
+    const after = await lstat(path);
+    if (!sameIdentity(before, after) || !after.isDirectory() || after.isSymbolicLink()) {
+      throw new AevorenBotError("WORKSPACE_TARGET_CHANGED");
+    }
+    return {
+      entries: entries.toSorted((left, right) => compareNames(left.name, right.name)),
+      identity: after,
+    };
+  } catch (error) {
+    if (error instanceof AevorenBotError) throw error;
+    throw new AevorenBotError("WORKSPACE_TARGET_CHANGED");
+  }
+}
+
+export class WorkspaceToolExecutor {
+  private productOperations?: import("./product-operation-service").ProductOperationService;
+
+  setProductOperations(service: import("./product-operation-service").ProductOperationService): void { this.productOperations = service; }
+
+  waitForComputer(tool: ToolRequest, runtimeRunId: string, content: string, signal: AbortSignal): Promise<string | undefined> {
+    return this.productOperations?.waitForComputer(tool, runtimeRunId, content, signal) ?? Promise.resolve(undefined);
+  }
+
+  productRequestPreview(tool: import("@shared/contracts").ProductToolRequest): string { return this.productOperations?.preview(tool) ?? "产品操作"; }
+
+  productRequestRequiresApproval(tool: import("@shared/contracts").ProductToolRequest, runtimeRunId?: string): boolean { return this.productOperations?.requiresApproval(tool, runtimeRunId) ?? true; }
+  productRequestApprovalReview(tool: import("@shared/contracts").ProductToolRequest, runtimeRunId: string): import("@shared/skill-execution-contracts").ApprovalReviewSnapshot | undefined {
+    return this.productOperations?.approvalReview(tool, runtimeRunId);
+  }
+
+  validateProductRequest(tool: import("@shared/contracts").ProductToolRequest, runtimeRunId: string): void {
+    if (!this.productOperations) throw new AevorenBotError("TOOL_STATE_INVALID");
+    this.productOperations.validate(tool, runtimeRunId);
+  }
+  constructor(
+    private readonly repository: AppRepository,
+    private readonly workspaceService: WorkspaceService,
+    private readonly networkTools?: NetworkToolExecutor,
+    private readonly mcpTools?: McpService,
+    private readonly deviceTools?: DeviceToolExecutor,
+  ) {}
+
+  async execute(id: string, signal: AbortSignal = new AbortController().signal): Promise<WorkspaceToolExecutionResult> {
+    const initial = this.repository.getToolInvocation(id);
+    if (initial.state !== "approved") {
+      throw new AevorenBotError("TOOL_STATE_INVALID", undefined, undefined, { currentState: initial.state });
+    }
+    if (signal.aborted) {
+      this.repository.cancelToolInvocation(id);
+      throw cancelled();
+    }
+
+    try {
+      this.repository.transitionToolInvocation(id, "dispatching");
+      this.assertInvocationAccess(initial);
+      if (initial.workspaceId && initial.toolKind !== "workspace-write") {
+        const targetType = initial.toolKind === "workspace-read" ? "file" : "directory";
+        await this.workspaceService.resolveExistingTarget(initial.workspaceId, initial.targetPath, targetType);
+      }
+      checkCancellation(signal);
+      this.repository.transitionToolInvocation(id, "running");
+
+      if (initial.arguments.kind === "bot-create" || initial.arguments.kind === "room-create") {
+        return this.repository.executeProjectCreation(id);
+      }
+
+      const result = await this.run(initial.arguments, signal, initial);
+      checkCancellation(signal);
+      this.assertInvocationAccess(initial);
+      const outboundResult=initial.arguments.kind==="product-call"&&initial.arguments.action==="execute"&&["outbound.send", "mcp.executeTool"].includes(initial.arguments.operation)
+        ? JSON.parse(result.content) as {result?:{state?:string}} : null;
+      if(outboundResult?.result?.state==="unknown")return {invocation:this.repository.interruptProductToolInvocation(id,result.content),content:result.content};
+      const invocation = this.repository.getToolInvocation(id).state === "succeeded" ? this.repository.getToolInvocation(id) : initial.arguments.kind === "product-call"
+        ? this.repository.completeProductToolInvocation(id, digestResult(result.content), result.content, result.metadata)
+        : this.repository.completeToolInvocation(id, digestResult(result.content), result.metadata);
+      return { invocation, content: result.content, ...(result.images ? { images: result.images } : {}), ...(result.modelText ? { modelText: result.modelText } : {}) };
+    } catch (error) {
+      const normalized = signal.aborted ? cancelled() : stableError(error);
+      const current = this.repository.getToolInvocation(id);
+      if (normalized.code === "TOOL_EXECUTION_CANCELLED") {
+        if (["awaiting-approval", "approved", "dispatching", "running"].includes(current.state)) {
+          this.repository.cancelToolInvocation(id);
+        }
+      } else if (current.state === "dispatching" || current.state === "running") {
+        this.repository.failToolInvocation(id, normalized.code);
+      } else if (current.state === "approved") {
+        // A dispatch-time permission check can reject before the state changes.
+        this.repository.cancelToolInvocation(id);
+      }
+      throw normalized;
+    }
+  }
+
+  private assertInvocationAccess(invocation: ToolInvocation): void {
+    this.repository.assertSessionExecutor(invocation.sessionId, invocation.executorBotId);
+    if (!invocation.workspaceId) return;
+    this.repository.assertSessionWorkspaceAccess(
+      invocation.sessionId, invocation.executorBotId, invocation.workspaceId, invocation.toolKind,
+    );
+    const workspace = this.repository.getWorkspace(invocation.workspaceId);
+    if (invocation.toolKind === "workspace-write" && !workspace.writeEnabled) {
+      throw new AevorenBotError("WORKSPACE_WRITE_NOT_ENABLED");
+    }
+  }
+
+  private async run(
+    tool: ToolRequest,
+    signal: AbortSignal,
+    invocation: ToolInvocation,
+  ): Promise<{ content: string; metadata: ResultMetadata; images?: import("./model-image").ModelImageAttachment[]; modelText?: import("./model-image").ModelTextAttachment }> {
+    if (tool.kind === "product-call") {
+      if (!this.productOperations) throw new AevorenBotError("TOOL_STATE_INVALID");
+      return this.productOperations.execute(tool, invocation, signal);
+    }
+    if (tool.kind === "web-search" || tool.kind === "web-fetch" || tool.kind === "weather-current" || tool.kind === "time-now") {
+      if (!this.networkTools) throw new AevorenBotError("NETWORK_TOOL_UNAVAILABLE");
+      return this.networkTools.run(tool as NetworkToolRequest, signal);
+    }
+    if (tool.kind === "mcp-call") {
+      if (!this.mcpTools) throw new AevorenBotError("MCP_SERVER_UNAVAILABLE");
+      return this.mcpTools.run(tool, signal);
+    }
+    if (tool.kind === "clipboard-read") {
+      if (!this.deviceTools) throw new AevorenBotError("TOOL_EXECUTION_FAILED");
+      return this.deviceTools.run(tool as DeviceToolRequest, signal);
+    }
+    if (tool.kind === "text-measure") return this.measureText(tool as ComputationToolRequest);
+    if (tool.kind === "project-bots") {
+      const result = this.repository.projectBotCatalog(invocation.executorBotId, invocation.sessionId);
+      return { content: JSON.stringify({ ok: true, ...result }), metadata: { projectId: result.projectId, count: result.bots.length } };
+    }
+    if (tool.kind === "bot-create" || tool.kind === "room-create") throw new AevorenBotError("TOOL_STATE_INVALID");
+    switch (tool.kind) {
+      case "workspace-list":
+        return this.list(tool, signal);
+      case "workspace-read":
+        return this.read(tool, signal);
+      case "workspace-search":
+        return this.search(tool, signal);
+      case "workspace-write":
+        return this.write(tool, signal, () => this.assertInvocationAccess(invocation));
+    }
+  }
+
+  private measureText(tool: ComputationToolRequest): { content: string; metadata: ResultMetadata } {
+    const characters = [...tool.text].length;
+    const nonWhitespaceCharacters = [...tool.text].filter((character) => !/\s/u.test(character)).length;
+    const words = [...new Intl.Segmenter("zh-CN", { granularity: "word" }).segment(tool.text)]
+      .filter((segment) => segment.isWordLike).length;
+    const lines = tool.text.length === 0 ? 0 : tool.text.split(/\r?\n/u).length;
+    const utf8Bytes = Buffer.byteLength(tool.text, "utf8");
+    const result = { characters, nonWhitespaceCharacters, words, lines, utf8Bytes };
+    return { content: JSON.stringify(result), metadata: { kind: tool.kind, ...result } };
+  }
+
+  private async list(
+    tool: Extract<WorkspaceToolRequest, { kind: "workspace-list" }>,
+    signal: AbortSignal,
+  ): Promise<{ content: string; metadata: ResultMetadata }> {
+    const target = await this.workspaceService.resolveExistingTarget(tool.workspaceId, tool.path, "directory");
+    const directory = await stableDirectoryEntries(target.canonicalPath, signal);
+    const entries = directory.entries;
+    const visible = entries.slice(0, tool.maxEntries).map((entry) => ({
+      name: entry.name,
+      type: entry.isFile()
+        ? "file"
+        : entry.isDirectory()
+          ? "directory"
+          : entry.isSymbolicLink()
+            ? "symlink"
+            : "other",
+    }));
+    await this.verifyTargetUnchanged(tool.workspaceId, tool.path, "directory", target.canonicalPath, directory.identity);
+    const truncated = entries.length > visible.length;
+    return {
+      content: JSON.stringify({ entries: visible, truncated }),
+      metadata: { kind: tool.kind, entries: visible.length, truncated },
+    };
+  }
+
+  private async read(
+    tool: Extract<WorkspaceToolRequest, { kind: "workspace-read" }>,
+    signal: AbortSignal,
+  ): Promise<{ content: string; metadata: ResultMetadata }> {
+    const value = await this.readText(tool.workspaceId, tool.path, tool.maxBytes, signal);
+    const csvSummary = !value.truncated && tool.path.toLowerCase().endsWith(".csv") ? summarizeCsv(value.text) : null;
+    const sha256 = createHash("sha256").update(value.text, "utf8").digest("hex");
+    return {
+      content: JSON.stringify({ path: tool.path, text: value.text, bytes: value.bytes, sha256, bytesScope: "returned_utf8_text", truncated: value.truncated, ...(csvSummary ? { csvSummary } : {}) }),
+      metadata: {
+        kind: tool.kind,
+        bytes: value.bytes,
+        truncated: value.truncated,
+        sha256,
+        ...(csvSummary ? { csvRowCount: csvSummary.rowCount, csvNumericSums: JSON.stringify(csvSummary.numericSums) } : {}),
+      },
+    };
+  }
+
+  private async search(
+    tool: Extract<WorkspaceToolRequest, { kind: "workspace-search" }>,
+    signal: AbortSignal,
+  ): Promise<{ content: string; metadata: ResultMetadata }> {
+    const root = await this.workspaceService.resolveExistingTarget(tool.workspaceId, tool.path, "directory");
+    const rootIdentity = await lstat(root.canonicalPath);
+    const deadline = Date.now() + MAX_SEARCH_DURATION_MS;
+    const matches: Array<{ path: string; line: number; preview: string }> = [];
+    let files = 0;
+    let bytes = 0;
+    let truncated = false;
+
+    const limitReached = (): boolean => {
+      checkCancellation(signal);
+      if (matches.length >= tool.maxMatches || files >= MAX_SEARCH_FILES || bytes >= MAX_SEARCH_BYTES || Date.now() >= deadline) {
+        truncated = true;
+        return true;
+      }
+      return false;
+    };
+
+    const visit = async (relativeDirectory: string, canonicalDirectory: string): Promise<void> => {
+      if (limitReached()) return;
+      const directory = await stableDirectoryEntries(canonicalDirectory, signal);
+      for (const entry of directory.entries) {
+        if (limitReached()) return;
+        const childRelative = relativeDirectory ? posix.join(relativeDirectory, entry.name) : entry.name;
+        // Keep user-visible relative paths POSIX-normalized, but use the host
+        // path implementation for canonical filesystem paths (Windows drive
+        // roots and separators must not be joined with posix.join()).
+        const childCanonical = join(canonicalDirectory, entry.name);
+        const before = await lstat(childCanonical);
+        if (before.isSymbolicLink()) continue;
+        if (before.isDirectory()) {
+          await visit(childRelative, childCanonical);
+          continue;
+        }
+        if (!before.isFile()) continue;
+
+        try {
+          const remainingBytes = MAX_SEARCH_BYTES - bytes;
+          if (remainingBytes <= 0) {
+            truncated = true;
+            return;
+          }
+          const maxBytes = Math.min(MAX_SEARCH_FILE_BYTES, remainingBytes);
+          const result = await this.readText(tool.workspaceId, childRelative, maxBytes, signal);
+          if (Date.now() >= deadline) {
+            truncated = true;
+            return;
+          }
+          const after = await lstat(childCanonical);
+          if (!sameIdentity(before, after) || after.isSymbolicLink()) {
+            throw new AevorenBotError("WORKSPACE_TARGET_CHANGED");
+          }
+          files += 1;
+          bytes += result.bytes;
+          if (result.truncated) truncated = true;
+          const lines = result.text.split(/\r?\n/);
+          for (let index = 0; index < lines.length; index += 1) {
+            const line = lines[index] ?? "";
+            if (!line.includes(tool.query)) continue;
+            matches.push({
+              path: childRelative,
+              line: index + 1,
+              preview: line.trim().slice(0, MAX_PREVIEW_CHARACTERS),
+            });
+            if (matches.length >= tool.maxMatches) {
+              truncated = true;
+              return;
+            }
+          }
+        } catch (error) {
+          if (error instanceof AevorenBotError && error.code === "WORKSPACE_BINARY_UNSUPPORTED") continue;
+          throw error;
+        }
+      }
+    };
+
+    await visit(tool.path, root.canonicalPath);
+    await this.verifyTargetUnchanged(tool.workspaceId, tool.path, "directory", root.canonicalPath, rootIdentity);
+    return {
+      content: JSON.stringify({ matches, truncated }),
+      metadata: { kind: tool.kind, files, matches: matches.length, truncated },
+    };
+  }
+
+  private async write(
+    tool: Extract<WorkspaceToolRequest, { kind: "workspace-write" }>,
+    signal: AbortSignal,
+    assertAccess: () => void,
+  ): Promise<{ content: string; metadata: ResultMetadata }> {
+    checkCancellation(signal);
+    const bytes = Buffer.byteLength(tool.content, "utf8");
+    if (bytes < 1 || bytes > MAX_WRITE_BYTES) throw new AevorenBotError("WORKSPACE_WRITE_FAILED");
+    if (containsLikelySecret(tool.content)) throw new AevorenBotError("WORKSPACE_WRITE_SECRET_BLOCKED");
+    const target = await this.workspaceService.resolveNewTextTarget(tool.workspaceId, tool.path);
+    assertAccess();
+    checkCancellation(signal);
+    const temporaryPath = join(target.canonicalParent, `.aevoren-${randomUUID()}.tmp`);
+    const noFollowFlag = process.platform === "win32" ? 0 : constants.O_NOFOLLOW;
+    let handle: Awaited<ReturnType<typeof open>> | null = null;
+    try {
+      handle = await open(temporaryPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollowFlag, 0o600);
+      await handle.writeFile(tool.content, "utf8");
+      await handle.sync();
+      await handle.close();
+      handle = null;
+      const latest = await this.workspaceService.resolveNewTextTarget(tool.workspaceId, tool.path);
+      if (latest.canonicalPath !== target.canonicalPath || latest.canonicalParent !== target.canonicalParent) {
+        throw new AevorenBotError("WORKSPACE_TARGET_CHANGED");
+      }
+      assertAccess();
+      checkCancellation(signal);
+      await link(temporaryPath, target.canonicalPath);
+      await unlink(temporaryPath);
+      const canonical = await realpath(target.canonicalPath);
+      if (canonical !== target.canonicalPath) throw new AevorenBotError("WORKSPACE_TARGET_CHANGED");
+      const written = await lstat(canonical);
+      if (!written.isFile() || written.isSymbolicLink() || written.size !== bytes) {
+        throw new AevorenBotError("WORKSPACE_WRITE_FAILED");
+      }
+      const sha256 = digestResult(tool.content);
+      return {
+        content: JSON.stringify({ ok: true, path: tool.path, bytes, sha256, created: true }),
+        metadata: { kind: tool.kind, path: tool.path, bytes, sha256, created: true },
+      };
+    } catch (error) {
+      if (handle) await handle.close().catch(() => undefined);
+      await unlink(temporaryPath).catch(() => undefined);
+      if (error instanceof AevorenBotError) throw error;
+      if (typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST") {
+        throw new AevorenBotError("WORKSPACE_WRITE_CONFLICT");
+      }
+      throw new AevorenBotError("WORKSPACE_WRITE_FAILED");
+    }
+  }
+
+  private async readText(
+    workspaceId: string,
+    relativePath: string,
+    maxBytes: number,
+    signal: AbortSignal,
+  ): Promise<{ text: string; bytes: number; truncated: boolean }> {
+    checkCancellation(signal);
+    const target = await this.workspaceService.resolveExistingTarget(workspaceId, relativePath, "file");
+    // Windows does not expose the POSIX O_NOFOLLOW flag. The target was already
+    // resolved and checked for symlinks by WorkspaceService; keep that guard on
+    // Windows while retaining the stronger open-time check on POSIX platforms.
+    const noFollowFlag = process.platform === "win32" ? 0 : constants.O_NOFOLLOW;
+    const handle = await open(target.canonicalPath, constants.O_RDONLY | noFollowFlag);
+    try {
+      const before = await handle.stat();
+      if (!before.isFile()) throw new AevorenBotError("WORKSPACE_TARGET_CHANGED");
+      const buffer = Buffer.allocUnsafe(maxBytes + 1);
+      let offset = 0;
+      while (offset < buffer.length) {
+        checkCancellation(signal);
+        const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
+        if (bytesRead === 0) break;
+        offset += bytesRead;
+      }
+      checkCancellation(signal);
+      const after = await handle.stat();
+      if (!sameIdentity(before, after)) throw new AevorenBotError("WORKSPACE_TARGET_CHANGED");
+      await this.verifyTargetUnchanged(workspaceId, relativePath, "file", target.canonicalPath, after);
+
+      const bounded = buffer.subarray(0, Math.min(offset, maxBytes));
+      const text = decodeUtf8(bounded);
+      const decodedBytes = Buffer.byteLength(text, "utf8");
+      return {
+        text,
+        bytes: decodedBytes,
+        truncated: offset > decodedBytes || after.size > decodedBytes,
+      };
+    } finally {
+      await handle.close();
+    }
+  }
+
+  private async verifyTargetUnchanged(
+    workspaceId: string,
+    relativePath: string,
+    expectedType: "file" | "directory",
+    canonicalPath: string,
+    identity?: Stats,
+  ): Promise<void> {
+    const latest = await this.workspaceService.resolveExistingTarget(workspaceId, relativePath, expectedType);
+    if (latest.canonicalPath !== canonicalPath) throw new AevorenBotError("WORKSPACE_TARGET_CHANGED");
+    if (identity) {
+      const latestStat = await lstat(latest.canonicalPath);
+      if (!sameIdentity(identity, latestStat)) throw new AevorenBotError("WORKSPACE_TARGET_CHANGED");
+    }
+  }
+}

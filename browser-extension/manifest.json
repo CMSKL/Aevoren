@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Aevoren Background Browser",
+  "version": "0.1.0",
+  "description": "仅在你明确共享的标签页中执行后台浏览器操作。",
+  "minimum_chrome_version": "124",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAym0E8hEL+43tr5EE8mHbrkDEqpNI3nZOzRmlhHoTtYe+90xsZY9WQwnJG9gh0noOtk7zm1+k6cAcdDDXFLE7HMCy/shfae9y64Ud+IernN58LnkLA749CGIcgB1jSvMk4EP0EnTmFqM4ilvX+0o4mU8e/K11bxrcD8lzjHATdRDVLb79D1PVP89fXoB/FLpBykxOH/1Zdx5gGg1FfF2e+uCFPOjVUXMNT8VuxMtqf/HSuDcsXndmJMEWMJC9w82RvSWq23rcza8PO6o86kuIhNnYMednvxDihYgrJeffYGnl/pNuda6KlHm4TnIIXG1QvgS+Zpl/duQCsAjOFc1fTwIDAQAB",
+  "permissions": ["activeTab", "tabs", "debugger", "storage"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "background": { "service_worker": "background.mjs", "type": "module" },
+  "action": { "default_popup": "popup.html", "default_title": "共享后台浏览器标签页" },
+  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'none'; connect-src ws://127.0.0.1:*" }
+}

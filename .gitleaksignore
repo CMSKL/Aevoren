@@ -1,0 +1,3 @@
+# Public RSA SubjectPublicKeyInfo in the MV3 manifest fixes the extension ID.
+# Verified as public-only; this exact immutable finding does not exempt future keys.
+cb891cee690090dd8f877928928c35ae4478dfc0:browser-extension/manifest.json:generic-api-key:7

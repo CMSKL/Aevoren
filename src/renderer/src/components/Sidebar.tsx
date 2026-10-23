@@ -1,0 +1,1198 @@
+import { PRODUCT_VIEW_DOM_EVENT, type ProductViewEvent } from "@shared/product-view";
+import { useEffectEvent, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import type { Bot, ConversationBatchDeleteInput, ConversationSummary, Project, Room, Workspace } from "@shared/contracts";
+import { sanitizeRoomSpeakerOutput } from "@shared/room-speaker-envelope";
+import { buildBotIdentityMap } from "../bot-identity";
+import { ChatSearchDialog } from "./ChatSearchDialog";
+import { BatchContextMenu } from "./BatchContextMenu";
+import { BotAvatarIcon } from "./BotAvatarIcon";
+import { BotContextMenu } from "./BotContextMenu";
+import { BotIcon, ChatIcon, CheckIcon, CloseIcon, ContactsIcon, FolderIcon, PencilIcon, PinIcon, PlusIcon, RoomIcon, SearchIcon, SettingsIcon, TrashIcon, ChevronDownIcon } from "./Icons";
+import { RoomAvatar } from "./RoomAvatar";
+import { RoomContextMenu } from "./RoomContextMenu";
+import { UserAvatar } from "./UserAvatar";
+
+export type RoomRestoreState = {
+  room: Room;
+  stage: "archive" | "show" | "sync" | "done";
+  pending: boolean;
+  opening: boolean;
+  error: string | null;
+};
+
+type SidebarProps = {
+  bots: Bot[];
+  rooms: Room[];
+  conversations: ConversationSummary[];
+  tab: "chats" | "contacts" | "workspace";
+  settingsActive?: boolean;
+  selectedContactId: string | null;
+  onTabChange(tab: "chats" | "contacts" | "workspace"): void;
+  onSelectContact(bot: Bot): void;
+  onHideBatch(input: ConversationBatchDeleteInput): Promise<boolean>;
+  onClearConversation(conversation: ConversationSummary): void;
+  projects: Project[];
+  activeProjectId: string;
+  workspaces: Workspace[];
+  selectedBotId: string | null;
+  selectedRoomId: string | null;
+  busy: boolean;
+  addingWorkspace: boolean;
+  workspaceError: string | null;
+  creationError: string | null;
+  mobileOpen: boolean;
+  userProfile?: { name?: string; avatarUrl?: string | null };
+  roomBotsById?: ReadonlyMap<string, readonly Bot[]>;
+  createButtonRef: RefObject<HTMLButtonElement | null>;
+  onCreateProject(): void;
+  onBindProject(projectId: string): void;
+  onSelectProject(projectId: string): void;
+  onOpenWorkspaces(workspaceId: string): void;
+  onCreate(): void;
+  onCreateBot(projectId: string): void;
+  onCreateRoom(projectId: string): void;
+  onOpenSettings(): void;
+  onOpenUserProfile?(): void;
+  onMobileClose(): void;
+  onSelectBot(bot: Bot): void;
+  onSelectRoom(room: Room): void;
+  restoreStates: Readonly<Record<string, RoomRestoreState>>;
+  onRestoreRoom(room: Room): Promise<void>;
+  onOpenRestoredRoom(room: Room): Promise<void>;
+  onDismissRestore(roomId: string): void;
+  onRenameRoom(room: Room, name: string): Promise<boolean>;
+  onCopyRoomId(room: Room): Promise<boolean>;
+  onArchiveRoom(room: Room): Promise<boolean>;
+  onPinRoom(room: Room, pinned: boolean): Promise<boolean>;
+  onMarkRoomUnread(room: Room, unread: boolean): Promise<boolean>;
+  onHideRoom(room: Room, hidden: boolean): Promise<boolean>;
+  onDeleteRoom(room: Room): Promise<boolean>;
+  onDeleteBatch(input: ConversationBatchDeleteInput): Promise<boolean>;
+  onPinBot(bot: Bot, pinned: boolean): Promise<boolean>;
+  onMarkBotUnread(bot: Bot, unread: boolean): Promise<boolean>;
+  onRenameBot(bot: Bot, name: string): Promise<boolean>;
+  onEditBot(bot: Bot): void;
+  onDuplicateBot(bot: Bot): Promise<boolean>;
+  onCopyBotId(bot: Bot): Promise<boolean>;
+  onHideBot(bot: Bot, hidden: boolean): Promise<boolean>;
+  onDeleteBot(bot: Bot): Promise<boolean>;
+};
+
+type ContextMenuState = { botId: string; x: number; y: number };
+type ConversationKey = `bot:${string}` | `room:${string}`;
+type BatchContextMenuState = { keys: ConversationKey[]; triggerKey: ConversationKey; x: number; y: number };
+
+const EMPTY_SELECTION = new Set<ConversationKey>();
+const activityTimeFormatter = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+const activityDateFormatter = new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit" });
+
+function formatActivityTime(value: string | undefined): string {
+  if (!value) return "";
+  const activity = new Date(value);
+  if (Number.isNaN(activity.getTime())) return "";
+  const today = new Date();
+  const isToday = activity.getFullYear() === today.getFullYear()
+    && activity.getMonth() === today.getMonth()
+    && activity.getDate() === today.getDate();
+  return isToday ? activityTimeFormatter.format(activity) : activityDateFormatter.format(activity);
+}
+
+function botKey(id: string): ConversationKey {
+  return `bot:${id}`;
+}
+
+function roomKey(id: string): ConversationKey {
+  return `room:${id}`;
+}
+
+function batchInput(keys: readonly ConversationKey[]): ConversationBatchDeleteInput {
+  return keys.reduce<ConversationBatchDeleteInput>((result, key) => {
+    if (key.startsWith("bot:")) result.botIds.push(key.slice(4));
+    else result.roomIds.push(key.slice(5));
+    return result;
+  }, { botIds: [], roomIds: [] });
+}
+
+function batchDeleteLabel(input: ConversationBatchDeleteInput): string {
+  const count = input.botIds.length + input.roomIds.length;
+  if (input.roomIds.length === 0) return `删除 ${count} 个 Bot`;
+  if (input.botIds.length === 0) return `删除 ${count} 个群聊`;
+  return `删除 ${count} 个项目`;
+}
+
+function orderVisibleBots(bots: Bot[]): Bot[] {
+  return [...bots].sort((left, right) => {
+    if (left.pinnedAt && right.pinnedAt) return left.pinnedAt.localeCompare(right.pinnedAt);
+    if (left.pinnedAt) return -1;
+    if (right.pinnedAt) return 1;
+    return left.createdAt.localeCompare(right.createdAt);
+  });
+}
+
+function orderVisibleRooms(rooms: Room[]): Room[] {
+  return [...rooms].sort((left, right) => {
+    if (left.pinnedAt && right.pinnedAt) return left.pinnedAt.localeCompare(right.pinnedAt);
+    if (left.pinnedAt) return -1;
+    if (right.pinnedAt) return 1;
+    return left.createdAt.localeCompare(right.createdAt);
+  });
+}
+
+export function Sidebar({
+  bots: sourceBots,
+  rooms: sourceRooms,
+  conversations,
+  tab,
+  settingsActive = false,
+  selectedContactId,
+  onTabChange,
+  onSelectContact,
+  onHideBatch,
+  onClearConversation,
+  projects,
+  activeProjectId,
+  workspaces,
+  selectedBotId,
+  selectedRoomId,
+  busy,
+  addingWorkspace,
+  workspaceError,
+  creationError,
+  mobileOpen,
+  userProfile,
+  roomBotsById,
+  createButtonRef,
+  onCreateProject,
+  onBindProject,
+  onSelectProject,
+  onOpenWorkspaces,
+  onCreate,
+  onCreateBot,
+  onCreateRoom,
+  onOpenSettings,
+  onOpenUserProfile,
+  onMobileClose,
+  onSelectBot,
+  onSelectRoom,
+  onRestoreRoom,
+  restoreStates,
+  onOpenRestoredRoom,
+  onDismissRestore,
+  onRenameRoom,
+  onCopyRoomId,
+  onArchiveRoom,
+  onPinRoom,
+  onMarkRoomUnread,
+  onHideRoom,
+  onDeleteRoom,
+  onDeleteBatch,
+  onPinBot,
+  onMarkBotUnread,
+  onRenameBot,
+  onEditBot,
+  onDuplicateBot,
+  onCopyBotId,
+  onHideBot,
+  onDeleteBot,
+}: SidebarProps): React.JSX.Element {
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  const footerRef = useRef<HTMLElement>(null);
+  const accountTriggerRef = useRef<HTMLButtonElement>(null);
+  const [query, setQuery] = useState("");
+  const [unreadOnly, setUnreadOnly] = useState(false);
+  const summaryByKey = useMemo(() => new Map(conversations.map((item) => [item.botId ? botKey(item.botId) : roomKey(item.roomId!), item])), [conversations]);
+  const bots = useMemo(() => sourceBots.map((bot) => {
+    const summary = summaryByKey.get(botKey(bot.id));
+    return { ...bot, pinnedAt: summary?.pinnedAt ?? null, hiddenAt: summary?.hiddenAt ?? null, hasUnread: summary?.hasUnread ?? false };
+  }), [sourceBots, summaryByKey]);
+  const rooms = useMemo(() => sourceRooms.map((room) => {
+    const summary = summaryByKey.get(roomKey(room.id));
+    return { ...room, pinnedAt: summary?.pinnedAt ?? null, hiddenAt: summary?.hiddenAt ?? null, hasUnread: summary?.hasUnread ?? false };
+  }), [sourceRooms, summaryByKey]);
+  const [archivedOpen, setArchivedOpen] = useState(false);
+  const [hiddenOpen, setHiddenOpen] = useState(false);
+  const [workspaceExpanded, setWorkspaceExpanded] = useState(true);
+  const [collapsedProjectIds, setCollapsedProjectIds] = useState<Set<string>>(() => new Set());
+  const [collapsedRoomGroupIds, setCollapsedRoomGroupIds] = useState<Set<string>>(() => new Set());
+  const [collapsedBotGroupIds, setCollapsedBotGroupIds] = useState<Set<string>>(() => new Set());
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [roomContextMenu, setRoomContextMenu] = useState<{ roomId: string; x: number; y: number } | null>(null);
+  const [batchContextMenu, setBatchContextMenu] = useState<BatchContextMenuState | null>(null);
+  const [selectedKeys, setSelectedKeys] = useState<Set<ConversationKey>>(EMPTY_SELECTION);
+  const handleProductView = useEffectEvent((event: Event) => {
+    const { request, respond } = (event as CustomEvent<ProductViewEvent>).detail;
+    const input = request.input;
+    if (input.action === "sidebar_search") { setFilterOpen(true); setQuery(input.query ?? ""); setUnreadOnly(input.unreadOnly ?? false); setSelectedKeys(EMPTY_SELECTION); respond({ status: "completed" }); }
+    if (input.action === "sidebar_expand") {
+      if (input.group === "hidden") setHiddenOpen(input.expanded ?? true);
+      else if (input.group === "archived") setArchivedOpen(input.expanded ?? true);
+      else if (input.group === "workspaces") setWorkspaceExpanded(input.expanded ?? true);
+      else if ((input.group === "bot_group" || input.group === "room_group") && input.projectId) { const setter = input.group === "bot_group" ? setCollapsedBotGroupIds : setCollapsedRoomGroupIds; setter((current) => { const next = new Set(current); if (input.expanded ?? true) next.delete(input.projectId!); else next.add(input.projectId!); return next; }); }
+      else if (input.group === "project" && input.projectId) setCollapsedProjectIds((current) => { const next = new Set(current); if (input.expanded ?? true) next.delete(input.projectId!); else next.add(input.projectId!); return next; });
+      else { respond({ status: "failed", reason: "请选择有效的分组。" }); return; }
+      respond({ status: "completed" });
+    }
+    if (input.action === "sidebar_select") {
+      const keys = [...(input.botIds ?? []).map((id) => `bot:${id}` as ConversationKey), ...(input.roomIds ?? []).map((id) => `room:${id}` as ConversationKey)];
+      if ((input.botIds ?? []).some((id) => !bots.some((bot) => bot.id === id)) || (input.roomIds ?? []).some((id) => !rooms.some((room) => room.id === id))) { respond({ status: "failed", reason: "选择目标不存在。" }); return; }
+      setSelectedKeys(new Set(keys)); respond({ status: "completed", result: { count: keys.length } });
+    }
+  });
+  useEffect(() => { const handler = (event: Event): void => handleProductView(event); window.addEventListener(PRODUCT_VIEW_DOM_EVENT, handler); return () => window.removeEventListener(PRODUCT_VIEW_DOM_EVENT, handler); }, []);
+  const [batchDeleteTarget, setBatchDeleteTarget] = useState<ConversationKey[] | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renamingRoomId, setRenamingRoomId] = useState<string | null>(null);
+  const [roomRenameDraft, setRoomRenameDraft] = useState("");
+  const [pendingBotId, setPendingBotId] = useState<string | null>(null);
+  const [pendingRoomId, setPendingRoomId] = useState<string | null>(null);
+  const [batchDeletePending, setBatchDeletePending] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Bot | null>(null);
+  const [roomDeleteTarget, setRoomDeleteTarget] = useState<Room | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const rowRefs = useRef(new Map<string, HTMLButtonElement>());
+  const roomRowRefs = useRef(new Map<string, HTMLButtonElement>());
+  const renameRef = useRef<HTMLInputElement>(null);
+  const roomRenameRef = useRef<HTMLInputElement>(null);
+  const deleteCancelRef = useRef<HTMLButtonElement>(null);
+  const deleteConfirmRef = useRef<HTMLButtonElement>(null);
+  const roomDeleteCancelRef = useRef<HTMLButtonElement>(null);
+  const roomDeleteConfirmRef = useRef<HTMLButtonElement>(null);
+  const batchDeleteCancelRef = useRef<HTMLButtonElement>(null);
+  const batchDeleteConfirmRef = useRef<HTMLButtonElement>(null);
+  const selectionAnchorRef = useRef<ConversationKey | null>(null);
+  const renameInFlightRef = useRef(false);
+  const roomRenameInFlightRef = useRef(false);
+  const botIdentities = useMemo(() => buildBotIdentityMap(bots), [bots]);
+  const botById = useMemo(() => new Map(bots.map((bot) => [bot.id, bot])), [bots]);
+  const roomById = useMemo(() => new Map(rooms.map((room) => [room.id, room])), [rooms]);
+  const recentConversations = useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase();
+    return conversations.filter((item) => {
+      const bot = item.botId ? botById.get(item.botId) : undefined;
+      const room = item.roomId ? roomById.get(item.roomId) : undefined;
+      if ((!bot && !room) || item.hiddenAt || room?.archivedAt || (unreadOnly && !item.hasUnread)) return false;
+      return !normalized || `${bot?.name ?? room?.name ?? ""}\n${bot?.label ?? ""}\n${item.lastMessage ?? ""}`.toLocaleLowerCase().includes(normalized);
+    }).toSorted((left, right) => Number(!!right.pinnedAt) - Number(!!left.pinnedAt)
+      || right.lastActivityAt.localeCompare(left.lastActivityAt) || left.sessionId.localeCompare(right.sessionId));
+  }, [botById, conversations, query, roomById, unreadOnly]);
+  const contacts = useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase();
+    return bots.filter((bot) => !normalized || `${bot.name}\n${bot.label}\n${bot.description}`.toLocaleLowerCase().includes(normalized))
+      .toSorted((left, right) => left.name.localeCompare(right.name, "zh-CN") || left.id.localeCompare(right.id));
+  }, [bots, query]);
+  const activeRooms = useMemo(
+    () => orderVisibleRooms(rooms.filter((room) => room.archivedAt === null && room.hiddenAt === null)),
+    [rooms],
+  );
+  const hiddenRooms = useMemo(
+    () => rooms.filter((room) => room.archivedAt === null && room.hiddenAt !== null),
+    [rooms],
+  );
+  const archivedRooms = useMemo(() => rooms.filter((room) => room.archivedAt !== null), [rooms]);
+  const visibleBots = useMemo(() => orderVisibleBots(bots.filter((bot) => bot.hiddenAt === null)), [bots]);
+  const hiddenBots = useMemo(() => bots.filter((bot) => bot.hiddenAt !== null), [bots]);
+  const projectGroups = useMemo(() => projects.map((project) => ({
+    project,
+    activeRooms: activeRooms.filter((room) => summaryByKey.get(roomKey(room.id))?.projectId === project.id),
+    hiddenRooms: hiddenRooms.filter((room) => summaryByKey.get(roomKey(room.id))?.projectId === project.id),
+    visibleBots: visibleBots.filter((bot) => summaryByKey.get(botKey(bot.id))?.projectId === project.id),
+    hiddenBots: hiddenBots.filter((bot) => summaryByKey.get(botKey(bot.id))?.projectId === project.id),
+  })), [activeRooms, hiddenBots, hiddenRooms, projects, summaryByKey, visibleBots]);
+  const contextBot = contextMenu ? bots.find((bot) => bot.id === contextMenu.botId) ?? null : null;
+  const contextRoom = roomContextMenu ? rooms.find((room) => room.id === roomContextMenu.roomId) ?? null : null;
+  const conversationOrder = useMemo<ConversationKey[]>(() => tab === "chats"
+    ? recentConversations.map((item) => item.botId ? botKey(item.botId) : roomKey(item.roomId!))
+    : tab === "contacts" ? contacts.map((bot) => botKey(bot.id))
+    : !workspaceExpanded ? [] : projectGroups.flatMap(({ project, activeRooms: projectRooms, visibleBots: projectBots }) => (
+    collapsedProjectIds.has(project.id) ? [] : [
+      ...(collapsedRoomGroupIds.has(project.id) ? [] : projectRooms).map((room) => roomKey(room.id)),
+      ...(collapsedBotGroupIds.has(project.id) ? [] : projectBots).map((bot) => botKey(bot.id)),
+    ]
+  )), [collapsedBotGroupIds, collapsedProjectIds, collapsedRoomGroupIds, contacts, projectGroups, recentConversations, tab, workspaceExpanded]);
+  const visibleSelectedKeys = useMemo(() => {
+    const available = new Set(conversationOrder);
+    return new Set([...selectedKeys].filter((key) => available.has(key)));
+  }, [conversationOrder, selectedKeys]);
+  const batchMenuInput = batchContextMenu ? batchInput(batchContextMenu.keys) : null;
+  const batchDialogInput = batchDeleteTarget ? batchInput(batchDeleteTarget) : null;
+  const batchDialogCount = batchDialogInput ? batchDialogInput.botIds.length + batchDialogInput.roomIds.length : 0;
+  const batchDialogTitle = batchDialogInput
+    ? tab === "chats" ? `移除 ${batchDialogCount} 个聊天？` : tab === "contacts" ? `删除 ${batchDialogCount} 个联系人？` : batchDialogInput.roomIds.length === 0
+      ? `删除 ${batchDialogCount} 个 Bot？`
+      : batchDialogInput.botIds.length === 0
+        ? `删除 ${batchDialogCount} 个群聊？`
+        : `删除 ${batchDialogCount} 个项目？`
+    : "";
+  const batchDialogDescription = batchDialogInput
+    ? tab === "chats" ? "聊天会从列表中移除，消息记录、联系人和工作区文件都会保留。" : batchDialogInput.roomIds.length === 0
+      ? "这会永久删除所选 Bot 的单聊记录，并将它们移出群聊。群聊历史发言仍会保留。"
+      : batchDialogInput.botIds.length === 0
+        ? "这会永久删除所选群聊及其聊天历史。群聊中的 Bot 不会被删除，此操作无法撤销。"
+        : "这会永久删除所选 Bot、群聊及对应单聊/群聊记录。未被选择的 Bot 和群聊仍会保留，此操作无法撤销。"
+    : "";
+
+  const clearMultiSelection = useCallback((): void => {
+    selectionAnchorRef.current = null;
+    setSelectedKeys(EMPTY_SELECTION);
+    setBatchContextMenu(null);
+  }, []);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 2_400);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
+  useEffect(() => {
+    if (!deleteTarget) return;
+    deleteCancelRef.current?.focus();
+    function cancelFromEscape(event: KeyboardEvent): void {
+      if (event.key !== "Escape" || pendingBotId === deleteTarget?.id) return;
+      event.preventDefault();
+      setDeleteTarget(null);
+    }
+    window.addEventListener("keydown", cancelFromEscape);
+    return () => window.removeEventListener("keydown", cancelFromEscape);
+  }, [deleteTarget, pendingBotId]);
+
+  useEffect(() => {
+    if (!roomDeleteTarget) return;
+    roomDeleteCancelRef.current?.focus();
+    function cancelFromEscape(event: KeyboardEvent): void {
+      if (event.key !== "Escape" || pendingRoomId === roomDeleteTarget?.id) return;
+      event.preventDefault();
+      setRoomDeleteTarget(null);
+    }
+    window.addEventListener("keydown", cancelFromEscape);
+    return () => window.removeEventListener("keydown", cancelFromEscape);
+  }, [roomDeleteTarget, pendingRoomId]);
+
+  useEffect(() => {
+    if (!batchDeleteTarget) return;
+    batchDeleteCancelRef.current?.focus();
+    function cancelFromEscape(event: KeyboardEvent): void {
+      if (event.key !== "Escape" || batchDeletePending) return;
+      event.preventDefault();
+      setBatchDeleteTarget(null);
+    }
+    window.addEventListener("keydown", cancelFromEscape);
+    return () => window.removeEventListener("keydown", cancelFromEscape);
+  }, [batchDeletePending, batchDeleteTarget]);
+
+  useEffect(() => {
+    if (visibleSelectedKeys.size === 0) return;
+    function handleSelectionKey(event: KeyboardEvent): void {
+      if (event.defaultPrevented || batchDeleteTarget || contextMenu || roomContextMenu || batchContextMenu) return;
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        clearMultiSelection();
+      } else if (event.key === "Delete" || event.key === "Backspace") {
+        event.preventDefault();
+        setBatchDeleteTarget(conversationOrder.filter((key) => visibleSelectedKeys.has(key)));
+      }
+    }
+    window.addEventListener("keydown", handleSelectionKey);
+    return () => window.removeEventListener("keydown", handleSelectionKey);
+  }, [batchContextMenu, batchDeleteTarget, clearMultiSelection, contextMenu, conversationOrder, roomContextMenu, visibleSelectedKeys]);
+
+  const closeContextMenu = useCallback((returnFocus = false): void => {
+    const botId = contextMenu?.botId;
+    setContextMenu(null);
+    if (returnFocus && botId) requestAnimationFrame(() => rowRefs.current.get(botId)?.focus());
+  }, [contextMenu?.botId]);
+
+  const closeRoomContextMenu = useCallback((returnFocus = false): void => {
+    const roomId = roomContextMenu?.roomId;
+    setRoomContextMenu(null);
+    if (returnFocus && roomId) requestAnimationFrame(() => roomRowRefs.current.get(roomId)?.focus());
+  }, [roomContextMenu?.roomId]);
+
+  const closeBatchContextMenu = useCallback((returnFocus = false): void => {
+    const triggerKey = batchContextMenu?.triggerKey;
+    setBatchContextMenu(null);
+    if (!returnFocus || !triggerKey) return;
+    requestAnimationFrame(() => {
+      if (triggerKey.startsWith("bot:")) rowRefs.current.get(triggerKey.slice(4))?.focus();
+      else roomRowRefs.current.get(triggerKey.slice(5))?.focus();
+    });
+  }, [batchContextMenu?.triggerKey]);
+
+  function handleSelection(
+    event: React.MouseEvent<HTMLButtonElement>,
+    key: ConversationKey,
+    open: () => void,
+  ): void {
+    if (event.metaKey || event.ctrlKey) {
+      selectionAnchorRef.current = key;
+      setSelectedKeys((current) => {
+        const next = new Set(current);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next.size === 0 ? EMPTY_SELECTION : next;
+      });
+      return;
+    }
+    if (event.shiftKey) {
+      const targetIndex = conversationOrder.indexOf(key);
+      const anchor = selectionAnchorRef.current;
+      const anchorIndex = anchor ? conversationOrder.indexOf(anchor) : -1;
+      if (targetIndex < 0) return;
+      if (anchorIndex < 0) {
+        selectionAnchorRef.current = key;
+        setSelectedKeys(new Set([key]));
+        return;
+      }
+      const start = Math.min(anchorIndex, targetIndex);
+      const end = Math.max(anchorIndex, targetIndex);
+      setSelectedKeys(new Set(conversationOrder.slice(start, end + 1)));
+      return;
+    }
+    selectionAnchorRef.current = key;
+    setSelectedKeys(EMPTY_SELECTION);
+    open();
+  }
+
+  function showBatchContextMenu(
+    key: ConversationKey,
+    clientX: number,
+    clientY: number,
+    fallback: DOMRect,
+  ): boolean {
+    if (!visibleSelectedKeys.has(key) || visibleSelectedKeys.size < 2) return false;
+    const keys = conversationOrder.filter((candidate) => visibleSelectedKeys.has(candidate));
+    if (keys.length < 2) return false;
+    const width = 218;
+    const height = 52;
+    const preferredX = clientX || fallback.right;
+    const preferredY = clientY || fallback.top;
+    setContextMenu(null);
+    setRoomContextMenu(null);
+    setBatchContextMenu({
+      keys,
+      triggerKey: key,
+      x: Math.max(8, Math.min(preferredX, window.innerWidth - width - 8)),
+      y: Math.max(8, Math.min(preferredY, window.innerHeight - height - 8)),
+    });
+    return true;
+  }
+
+  function openContextMenu(event: React.MouseEvent<HTMLButtonElement>, bot: Bot): void {
+    event.preventDefault();
+    event.stopPropagation();
+    if (showBatchContextMenu(botKey(bot.id), event.clientX, event.clientY, event.currentTarget.getBoundingClientRect())) return;
+    setRoomContextMenu(null);
+    setBatchContextMenu(null);
+    showContextMenu(bot, event.clientX, event.clientY, event.currentTarget.getBoundingClientRect());
+  }
+
+  function showContextMenu(bot: Bot, clientX: number, clientY: number, fallback: DOMRect): void {
+    if (busy || pendingBotId) return;
+    const width = 218;
+    const height = bot.hiddenAt ? 350 : 390;
+    const preferredX = clientX || fallback.right;
+    const preferredY = clientY || fallback.top;
+    setContextMenu({
+      botId: bot.id,
+      x: Math.max(8, Math.min(preferredX, window.innerWidth - width - 8)),
+      y: Math.max(8, Math.min(preferredY, window.innerHeight - height - 8)),
+    });
+  }
+
+  function openRoomContextMenu(event: React.MouseEvent<HTMLButtonElement>, room: Room): void {
+    event.preventDefault();
+    event.stopPropagation();
+    if (showBatchContextMenu(roomKey(room.id), event.clientX, event.clientY, event.currentTarget.getBoundingClientRect())) return;
+    setContextMenu(null);
+    setBatchContextMenu(null);
+    showRoomContextMenu(room, event.clientX, event.clientY, event.currentTarget.getBoundingClientRect());
+  }
+
+  function showRoomContextMenu(room: Room, clientX: number, clientY: number, fallback: DOMRect): void {
+    if (busy || pendingRoomId) return;
+    const width = 218;
+    const height = room.hiddenAt ? 260 : 330;
+    const preferredX = clientX || fallback.right;
+    const preferredY = clientY || fallback.top;
+    setRoomContextMenu({
+      roomId: room.id,
+      x: Math.max(8, Math.min(preferredX, window.innerWidth - width - 8)),
+      y: Math.max(8, Math.min(preferredY, window.innerHeight - height - 8)),
+    });
+  }
+
+  async function perform(bot: Bot, operation: () => Promise<boolean>, successMessage: string | null): Promise<boolean> {
+    if (pendingBotId) return false;
+    setPendingBotId(bot.id);
+    setNotice(null);
+    const succeeded = await operation();
+    setPendingBotId(null);
+    setNotice(succeeded ? successMessage : "操作未完成，请重试。");
+    return succeeded;
+  }
+
+  async function performRoom(room: Room, operation: () => Promise<boolean>, successMessage: string | null): Promise<boolean> {
+    if (pendingRoomId || restoreStates[room.id]?.pending || restoreStates[room.id]?.opening) return false;
+    setPendingRoomId(room.id);
+    setNotice(null);
+    const succeeded = await operation();
+    setPendingRoomId(null);
+    setNotice(succeeded ? successMessage : "操作未完成，请重试。");
+    return succeeded;
+  }
+
+  async function performBatchDelete(): Promise<void> {
+    if (!batchDialogInput || batchDeletePending) return;
+    setBatchDeletePending(true);
+    setNotice(null);
+    const succeeded = await (tab === "chats" ? onHideBatch(batchDialogInput) : onDeleteBatch(batchDialogInput));
+    setBatchDeletePending(false);
+    if (!succeeded) {
+      setNotice("批量操作未完成，请重试。");
+      return;
+    }
+    const count = batchDialogInput.botIds.length + batchDialogInput.roomIds.length;
+    setBatchDeleteTarget(null);
+    clearMultiSelection();
+    setNotice(tab === "chats" ? `已移除 ${count} 个聊天。` : `已删除 ${count} 个项目。`);
+  }
+
+  function beginRename(bot: Bot): void {
+    setRenamingId(bot.id);
+    setRenameDraft(bot.name);
+    requestAnimationFrame(() => {
+      renameRef.current?.focus();
+      renameRef.current?.select();
+    });
+  }
+
+  async function commitRename(bot: Bot): Promise<void> {
+    if (renameInFlightRef.current) return;
+    const nextName = renameDraft.replace(/\s+/g, " ").trim();
+    if (!nextName || nextName === bot.name) {
+      setRenamingId(null);
+      return;
+    }
+    renameInFlightRef.current = true;
+    setPendingBotId(bot.id);
+    const succeeded = await onRenameBot(bot, nextName);
+    renameInFlightRef.current = false;
+    setPendingBotId(null);
+    if (succeeded) {
+      setRenamingId(null);
+      setNotice("Bot 已重命名。");
+    } else {
+      setNotice("重命名失败，请重试。");
+      requestAnimationFrame(() => renameRef.current?.focus());
+    }
+  }
+
+  function beginRoomRename(room: Room): void {
+    setRenamingRoomId(room.id);
+    setRoomRenameDraft(room.name);
+    requestAnimationFrame(() => {
+      roomRenameRef.current?.focus();
+      roomRenameRef.current?.select();
+    });
+  }
+
+  async function commitRoomRename(room: Room): Promise<void> {
+    if (roomRenameInFlightRef.current) return;
+    const nextName = roomRenameDraft.replace(/\s+/g, " ").trim();
+    if (!nextName || nextName === room.name) {
+      setRenamingRoomId(null);
+      return;
+    }
+    roomRenameInFlightRef.current = true;
+    setPendingRoomId(room.id);
+    const succeeded = await onRenameRoom(room, nextName);
+    roomRenameInFlightRef.current = false;
+    setPendingRoomId(null);
+    if (succeeded) {
+      setRenamingRoomId(null);
+      setNotice("群聊已重命名。");
+    } else {
+      setNotice("重命名失败，请重试。");
+      requestAnimationFrame(() => roomRenameRef.current?.focus());
+    }
+  }
+
+  function renderRoomRow(room: Room): React.JSX.Element {
+    const key = roomKey(room.id);
+    const summary = summaryByKey.get(key);
+    const batchSelectable = conversationOrder.includes(key);
+    const multiSelected = visibleSelectedKeys.has(key);
+    if (renamingRoomId === room.id) {
+      return (
+        <div className={`bot-row conversation-row renaming${room.id === selectedRoomId ? " selected" : ""}`} key={room.id} role="listitem">
+          <span className="bot-icon conversation-avatar"><RoomAvatar bots={roomBotsById?.get(room.id)} userProfile={userProfile} /></span>
+          <input
+            ref={roomRenameRef}
+            className="bot-rename-input"
+            aria-label="重命名聊天"
+            maxLength={72}
+            disabled={pendingRoomId === room.id}
+            value={roomRenameDraft}
+            onChange={(event) => setRoomRenameDraft(event.target.value)}
+            onBlur={() => void commitRoomRename(room)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                event.currentTarget.blur();
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                setRenamingRoomId(null);
+                requestAnimationFrame(() => roomRowRefs.current.get(room.id)?.focus());
+              }
+            }}
+          />
+        </div>
+      );
+    }
+    return (
+      <button
+        ref={(element) => {
+          if (element) roomRowRefs.current.set(room.id, element);
+          else roomRowRefs.current.delete(room.id);
+        }}
+        type="button"
+        className={`bot-row conversation-row${room.id === selectedRoomId ? " selected" : ""}${multiSelected ? " multi-selected" : ""}`}
+        key={room.id}
+        disabled={restoreStates[room.id]?.pending || restoreStates[room.id]?.opening}
+        onClick={(event) => {
+          if (batchSelectable) handleSelection(event, key, () => onSelectRoom(room));
+          else {
+            clearMultiSelection();
+            onSelectRoom(room);
+          }
+        }}
+        onContextMenu={(event) => openRoomContextMenu(event, room)}
+        onKeyDown={(event) => {
+          if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+          event.preventDefault();
+          if (!showBatchContextMenu(key, 0, 0, event.currentTarget.getBoundingClientRect())) {
+            setBatchContextMenu(null);
+            showRoomContextMenu(room, 0, 0, event.currentTarget.getBoundingClientRect());
+          }
+        }}
+        role="listitem"
+        aria-label={room.name}
+        aria-haspopup="menu"
+        data-multi-selected={multiSelected ? "true" : undefined}
+      >
+        <span className="bot-icon conversation-avatar">{multiSelected ? <CheckIcon /> : <RoomAvatar bots={roomBotsById?.get(room.id)} userProfile={userProfile} />}</span>
+        <span className="bot-copy"><strong>{room.name}</strong><small>{tab === "chats" ? sanitizeRoomSpeakerOutput(summary?.lastMessage ?? "", true) || "暂无消息 · 群聊" : "多 Bot 群聊"}</small></span>
+        <span className="bot-row-state" aria-hidden="true">
+          {tab === "chats" && summary ? <time className="conversation-time" dateTime={summary.lastActivityAt}>{formatActivityTime(summary.lastActivityAt)}</time> : null}
+          <span className="conversation-row-indicators">
+            {room.pinnedAt ? <PinIcon /> : null}
+            {room.hasUnread ? <i /> : null}
+          </span>
+        </span>
+      </button>
+    );
+  }
+
+  function renderBotRow(bot: Bot): React.JSX.Element {
+    const identity = botIdentities.get(bot.id)!;
+    const key = botKey(bot.id);
+    const summary = summaryByKey.get(key);
+    const selected = bot.id === (tab === "contacts" ? selectedContactId : selectedBotId);
+    const select = (): void => tab === "contacts" ? onSelectContact(bot) : onSelectBot(bot);
+    const batchSelectable = conversationOrder.includes(key);
+    const multiSelected = visibleSelectedKeys.has(key);
+    if (renamingId === bot.id) {
+      return (
+        <div className={`bot-row conversation-row renaming${selected ? " selected" : ""}`} key={bot.id} role="listitem">
+          <span className="bot-icon bot-avatar-container conversation-avatar"><BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={48} /></span>
+          <input
+            ref={renameRef}
+            className="bot-rename-input"
+            aria-label="重命名 Bot"
+            maxLength={80}
+            disabled={pendingBotId === bot.id}
+            value={renameDraft}
+            onChange={(event) => setRenameDraft(event.target.value)}
+            onBlur={() => void commitRename(bot)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                event.currentTarget.blur();
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                setRenamingId(null);
+                requestAnimationFrame(() => rowRefs.current.get(bot.id)?.focus());
+              }
+            }}
+          />
+        </div>
+      );
+    }
+    return (
+      <button
+        ref={(element) => {
+          if (element) rowRefs.current.set(bot.id, element);
+          else rowRefs.current.delete(bot.id);
+        }}
+        type="button"
+        className={`bot-row conversation-row${selected ? " selected" : ""}${multiSelected ? " multi-selected" : ""}`}
+        key={bot.id}
+        onClick={(event) => {
+          if (batchSelectable) handleSelection(event, key, select);
+          else {
+            clearMultiSelection();
+            select();
+          }
+        }}
+        onContextMenu={(event) => openContextMenu(event, bot)}
+        onKeyDown={(event) => {
+          if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+          event.preventDefault();
+          if (!showBatchContextMenu(key, 0, 0, event.currentTarget.getBoundingClientRect())) {
+            setBatchContextMenu(null);
+            showContextMenu(bot, 0, 0, event.currentTarget.getBoundingClientRect());
+          }
+        }}
+        role="listitem"
+        aria-label={identity.inline}
+        aria-haspopup="menu"
+        data-multi-selected={multiSelected ? "true" : undefined}
+      >
+        <span className={`bot-icon conversation-avatar${multiSelected ? "" : " bot-avatar-container"}`}>
+          {multiSelected ? <CheckIcon /> : <BotAvatarIcon shape={bot.avatarShape} color={bot.avatarColor} size={48} />}
+        </span>
+        <span className="bot-copy">
+          <strong>{identity.primary}</strong>
+          <small>{tab === "chats" ? `${identity.disambiguated ? `${identity.secondary} · ` : ""}${summary?.lastMessage || "暂无消息"}` : identity.secondary}</small>
+        </span>
+        <span className="bot-row-state" aria-hidden="true">
+          {tab === "chats" && summary ? <time className="conversation-time" dateTime={summary.lastActivityAt}>{formatActivityTime(summary.lastActivityAt)}</time> : null}
+          <span className="conversation-row-indicators">
+            {tab !== "contacts" && bot.pinnedAt ? <PinIcon /> : null}
+            {tab !== "contacts" && bot.hasUnread ? <i /> : null}
+          </span>
+        </span>
+      </button>
+    );
+  }
+
+  useEffect(() => {
+    const shortcut = (event: KeyboardEvent): void => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k" && !settingsActive) { event.preventDefault(); setSearchOpen(true); setNavigationOpen(false); }
+    };
+    window.addEventListener("keydown", shortcut);
+    return () => window.removeEventListener("keydown", shortcut);
+  }, [settingsActive]);
+  useEffect(() => {
+    if (!navigationOpen) return;
+    const close = (event: PointerEvent): void => { if (!footerRef.current?.contains(event.target as Node)) setNavigationOpen(false); };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [navigationOpen]);
+
+  return (
+    <aside className={`sidebar${mobileOpen ? " mobile-open" : ""}${settingsActive ? " settings-sidebar" : ""}`} aria-label="聊天列表">
+
+
+      <section className="sidebar-list" aria-label={tab === "chats" ? "聊天" : tab === "contacts" ? "联系人" : "工作区"}>
+        <div className={`sidebar-header sidebar-list-header${tab === "contacts" ? " is-contacts" : ""}`}>
+          {tab === "contacts" ? <h2 className="sidebar-list-title">联系人</h2> : null}
+          {visibleSelectedKeys.size > 0 ? (
+            <>
+              <div className="sidebar-selection-count">已选择 {visibleSelectedKeys.size} 项</div>
+              <div className="sidebar-header-actions sidebar-selection-actions">
+                <button
+                  className="sidebar-selection-action danger"
+                  type="button"
+                  aria-label={`${tab === "chats" ? "移除" : "删除"}已选择的 ${visibleSelectedKeys.size} 项`}
+                  onClick={() => setBatchDeleteTarget(conversationOrder.filter((key) => visibleSelectedKeys.has(key)))}
+                  disabled={batchDeletePending}
+                >
+                  <TrashIcon />
+                </button>
+                <button className="sidebar-selection-action" type="button" aria-label="清除多选" onClick={clearMultiSelection} disabled={batchDeletePending}>
+                  <CloseIcon />
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              {tab !== "workspace" ? (
+                <button className="sidebar-search-trigger" type="button" aria-label="搜索" title="搜索 · ⌘ K" onClick={() => setSearchOpen(true)}><SearchIcon /></button>
+              ) : <h2 className="sidebar-list-title">工作区</h2>}
+              <button ref={createButtonRef} className="new-bot-button" type="button" aria-label={tab === "workspace" ? "新建工作区" : tab === "contacts" ? "添加联系人" : "新建聊天"} title={tab === "workspace" ? "添加文件夹工作区" : tab === "contacts" ? "添加联系人" : "新建聊天"} onClick={tab === "workspace" ? onCreateProject : onCreate} disabled={busy || (tab === "workspace" && addingWorkspace)}>
+                <PlusIcon />
+              </button>
+            </>
+          )}
+          <button className="drawer-close-button" type="button" aria-label="关闭 Bot 列表" onClick={onMobileClose}>
+            <CloseIcon />
+          </button>
+        </div>
+      {filterOpen || query || unreadOnly ? <div className="sidebar-active-filter" role="search" aria-label="筛选列表"><SearchIcon /><input type="search" aria-label={tab === "contacts" ? "搜索联系人" : "搜索聊天"} placeholder="筛选聊天" value={query} onChange={event => { clearMultiSelection(); setQuery(event.target.value); }} /><button type="button" aria-pressed={unreadOnly} onClick={() => setUnreadOnly(value => !value)}>未读</button><button type="button" aria-label="清除列表筛选" onClick={() => { setQuery(""); setUnreadOnly(false); setFilterOpen(false); }}><CloseIcon /></button></div> : null}
+      <div className="bot-list" id="sidebar-tab-content" role="tabpanel" aria-labelledby={`navigation-${tab}`}>
+        {tab === "chats" ? <>
+          <div role="list" aria-label="最近聊天">
+            {recentConversations.map((item) => item.botId ? renderBotRow(botById.get(item.botId)!) : renderRoomRow(roomById.get(item.roomId!)!))}
+            {recentConversations.length === 0 ? <div className="bot-list-empty">{query || unreadOnly ? "没有匹配的聊天" : "还没有聊天。点击新建聊天开始。"}</div> : null}
+          </div>
+          {hiddenBots.length + hiddenRooms.length > 0 ? <>
+            <button className="archived-toggle" type="button" aria-expanded={hiddenOpen} onClick={() => setHiddenOpen((open) => !open)}>已移除的聊天 ({hiddenBots.length + hiddenRooms.length})</button>
+            {hiddenOpen ? <div role="list">{hiddenRooms.map(renderRoomRow)}{hiddenBots.map(renderBotRow)}</div> : null}
+          </> : null}
+        </> : tab === "contacts" ? <div role="list" aria-label="全部联系人">
+          {contacts.map(renderBotRow)}
+          {contacts.length === 0 ? <div className="bot-list-empty">{query ? "没有匹配的联系人" : "还没有联系人。新建一个 Bot 开始。"}</div> : null}
+        </div> : <section className="sidebar-workspace" aria-label="工作区">
+          <div className="sidebar-workspace-heading">
+            <button
+              className="sidebar-workspace-toggle"
+              type="button"
+              aria-expanded={workspaceExpanded}
+              aria-controls="sidebar-workspace-content"
+              onClick={() => setWorkspaceExpanded((expanded) => !expanded)}
+            >
+              <span>项目</span>
+              <ChevronDownIcon className={workspaceExpanded ? "" : "collapsed"} />
+            </button>
+          </div>
+          {workspaceError ? <div className="dialog-error" role="alert">{workspaceError}</div> : null}
+          {creationError ? <div className="dialog-error" role="alert">{creationError}</div> : null}
+          <div className="sidebar-workspace-content" id="sidebar-workspace-content" hidden={!workspaceExpanded}>
+            {projectGroups.map(({ project, activeRooms: projectRooms, hiddenRooms: projectHiddenRooms, visibleBots: projectBots, hiddenBots: projectHiddenBots }) => {
+              const projectCollapsed = collapsedProjectIds.has(project.id);
+              const roomsCollapsed = collapsedRoomGroupIds.has(project.id);
+              const botsCollapsed = collapsedBotGroupIds.has(project.id);
+              const projectContentId = `sidebar-project-content-${project.id}`;
+              const workspace = workspaces.find((item) => item.id === project.workspaceId);
+              const roomItemsId = project.isDefault ? "sidebar-room-items" : `sidebar-room-items-${project.id}`;
+              const botItemsId = project.isDefault ? "sidebar-bot-items" : `sidebar-bot-items-${project.id}`;
+              return (
+                <section className="sidebar-project" key={project.id} aria-label={`项目 ${project.name}`}>
+                  <div className="sidebar-project-heading">
+                    <button
+                      className={`sidebar-project-toggle${activeProjectId === project.id ? " active" : ""}`}
+                      type="button"
+                      aria-expanded={!projectCollapsed}
+                      aria-controls={projectContentId}
+                      onClick={() => {
+                        onSelectProject(project.id);
+                        setCollapsedProjectIds((current) => {
+                          const next = new Set(current);
+                          if (next.has(project.id)) next.delete(project.id);
+                          else next.add(project.id);
+                          return next;
+                        });
+                      }}
+                    >
+                      <ChevronDownIcon className={projectCollapsed ? "collapsed" : ""} />
+                      <FolderIcon />
+                      <span>{project.name}</span>
+                    </button>
+                    {workspace ? (
+                      <button
+                        className="sidebar-workspace-add"
+                        type="button"
+                        aria-label={`管理工作区 ${project.name}`}
+                        title="工作区权限"
+                        onClick={() => onOpenWorkspaces(workspace.id)}
+                      ><SettingsIcon /></button>
+                    ) : null}
+                  </div>
+                  <div className="sidebar-project-content" id={projectContentId} hidden={projectCollapsed}>
+                    {!workspace ? (
+                      <button
+                        className="text-button sidebar-project-bind"
+                        type="button"
+                        onClick={() => onBindProject(project.id)}
+                        disabled={addingWorkspace}
+                      >{project.workspaceId ? "重新授权文件夹" : "关联文件夹"}</button>
+                    ) : null}
+                    <section className="sidebar-workspace-section" aria-label="群聊">
+                      <h3 className="sidebar-workspace-section-title" aria-label="群聊">
+                        <button
+                          className="sidebar-workspace-section-heading"
+                          type="button"
+                          aria-expanded={!roomsCollapsed}
+                          aria-controls={roomItemsId}
+                          onClick={() => setCollapsedRoomGroupIds((current) => {
+                            const next = new Set(current);
+                            if (next.has(project.id)) next.delete(project.id);
+                            else next.add(project.id);
+                            return next;
+                          })}
+                        >
+                          <ChevronDownIcon className={roomsCollapsed ? "collapsed" : ""} />
+                          <RoomIcon />
+                          <span>群聊</span>
+                        </button>
+                        <button className="sidebar-workspace-add" type="button" aria-label={`在 ${project.name} 新建群聊`} title="新建群聊" disabled={busy} onClick={() => onCreateRoom(project.id)}><PlusIcon /></button>
+                      </h3>
+                      <div className="sidebar-workspace-items" id={roomItemsId} role="list" hidden={roomsCollapsed}>
+                        {projectRooms.length > 0 ? projectRooms.map(renderRoomRow) : <div className="bot-list-empty">暂无群聊</div>}
+                      </div>
+                    </section>
+                    <section className="sidebar-workspace-section" aria-label="Bot">
+                      <h3 className="sidebar-workspace-section-title" aria-label="Bot">
+                        <button
+                          className="sidebar-workspace-section-heading"
+                          type="button"
+                          aria-expanded={!botsCollapsed}
+                          aria-controls={botItemsId}
+                          onClick={() => setCollapsedBotGroupIds((current) => {
+                            const next = new Set(current);
+                            if (next.has(project.id)) next.delete(project.id);
+                            else next.add(project.id);
+                            return next;
+                          })}
+                        >
+                          <ChevronDownIcon className={botsCollapsed ? "collapsed" : ""} />
+                          <BotIcon />
+                          <span>Bot</span>
+                        </button>
+                        <button className="sidebar-workspace-add" type="button" aria-label={`在 ${project.name} 新建 Bot`} title="新建 Bot" disabled={busy} onClick={() => onCreateBot(project.id)}><PlusIcon /></button>
+                      </h3>
+                      <div className="sidebar-workspace-items" id={botItemsId} role="list" hidden={botsCollapsed}>
+                        {projectBots.length > 0
+                          ? projectBots.map(renderBotRow)
+                          : <div className="bot-list-empty">还没有 Bot。新建一个 Bot 开始工作。</div>}
+                      </div>
+                    </section>
+                    {projectHiddenBots.length + projectHiddenRooms.length > 0 ? (
+                      <>
+                        <button className="archived-toggle" type="button" aria-expanded={hiddenOpen} onClick={() => setHiddenOpen((open) => !open)}>
+                          已隐藏 ({projectHiddenBots.length + projectHiddenRooms.length})
+                        </button>
+                        {hiddenOpen ? <div className="sidebar-workspace-items" role="list">{projectHiddenRooms.map(renderRoomRow)}{projectHiddenBots.map(renderBotRow)}</div> : null}
+                      </>
+                    ) : null}
+                  </div>
+                </section>
+              );
+            })}
+            {projects.length === 0 ? <div className="bot-list-empty">正在加载项目…</div> : null}
+          </div>
+          {archivedRooms.length > 0 || Object.keys(restoreStates).length > 0 ? <section aria-label="归档群聊">
+            <button className="archived-toggle" type="button" aria-expanded={archivedOpen} aria-controls="sidebar-archived-rooms" onClick={() => setArchivedOpen((open) => !open)}>已归档 ({archivedRooms.length})</button>
+            <div id="sidebar-archived-rooms" hidden={!archivedOpen}>
+              {archivedRooms.map((room) => <div className="archived-room-row" data-testid={`archive-room-${room.id}`} key={room.id}><span title={room.name}>{room.name}</span><button className="text-button" type="button" disabled={restoreStates[room.id]?.pending || restoreStates[room.id]?.opening} onClick={() => void onRestoreRoom(room)}>{restoreStates[room.id]?.pending ? "恢复中…" : "恢复"}</button></div>)}
+              {Object.values(restoreStates).map((state) => <div className="archive-feedback" data-testid={`archive-feedback-${state.room.id}`} key={state.room.id}>
+                <span className="archive-feedback-name" title={state.room.name}>{state.room.name}</span>
+                <p role={state.error ? "alert" : "status"}>
+                  {state.pending ? "正在恢复…" : state.opening ? "正在打开…" : state.stage === "done" ? state.error ? `已恢复，但暂时无法打开。${state.error}` : "已恢复到聊天列表" : state.stage === "archive" ? `恢复未完成。${state.error ?? "请重试。"}` : `已取消归档，${state.stage === "show" ? "返回聊天列表未完成" : "列表同步未完成"}。${state.error ?? "请重试。"}`}
+                </p>
+                <div className="archive-feedback-actions">
+                  {state.stage === "done" ? <button className="text-button" type="button" disabled={state.opening} onClick={() => void onOpenRestoredRoom(state.room)}>{state.error ? "重新打开" : "打开"}</button> : state.error ? <button className="text-button" type="button" disabled={state.pending} onClick={() => void onRestoreRoom(state.room)}>重试</button> : null}
+                  <button className="text-button" type="button" aria-label={`关闭 ${state.room.name} 的恢复提示`} disabled={state.pending || state.opening || state.stage !== "done"} onClick={() => onDismissRestore(state.room.id)}>关闭</button>
+                </div>
+              </div>)}
+            </div>
+          </section> : null}
+        </section>}
+      </div>
+
+      </section>
+
+      <nav className="sidebar-footer" aria-label="主导航" ref={footerRef} onKeyDown={event => {
+        if (event.key === "Escape" && navigationOpen) { event.preventDefault(); event.stopPropagation(); setNavigationOpen(false); accountTriggerRef.current?.focus(); }
+      }}>
+        <button ref={accountTriggerRef} className="sidebar-account-trigger" type="button" aria-label="打开账户菜单" aria-controls="sidebar-account-menu" aria-expanded={navigationOpen} onClick={() => setNavigationOpen(open => !open)}><UserAvatar avatarUrl={userProfile?.avatarUrl} name={userProfile?.name} size={36} /></button>
+        <div id="sidebar-account-menu" className="sidebar-account-menu" hidden={!navigationOpen}>
+          <button type="button" aria-label="打开个人资料" onClick={() => { setNavigationOpen(false); onOpenUserProfile?.(); }} disabled={!onOpenUserProfile}><PencilIcon /><span>个人资料</span></button>
+        <div className="nav-rail-tabs" role="tablist" aria-label="导航" aria-orientation="vertical">
+          {([ ["chats", "聊天", ChatIcon], ["contacts", "联系人", ContactsIcon], ["workspace", "工作区", FolderIcon] ] as const).map(([value, label, Icon]) => (
+            <button
+              className={`nav-rail-button${!settingsActive && tab === value ? " active" : ""}`}
+              key={value}
+              id={`navigation-${value}`}
+              type="button"
+              role="tab"
+              aria-label={label}
+              aria-selected={!settingsActive && tab === value}
+              aria-controls="sidebar-tab-content"
+              tabIndex={tab === value ? 0 : -1}
+              onClick={() => { clearMultiSelection(); setNotice(null); setQuery(""); setContextMenu(null); setRoomContextMenu(null); onTabChange(value); setNavigationOpen(false); }}
+              onKeyDown={(event) => {
+                if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+                event.preventDefault();
+                const values = ["chats", "contacts", "workspace"] as const;
+                const forward = event.key === "ArrowDown" || event.key === "ArrowRight";
+                const index = event.key === "Home" ? 0 : event.key === "End" ? values.length - 1 : (values.findIndex((value) => value === tab) + (forward ? 1 : -1) + values.length) % values.length;
+                clearMultiSelection(); setNotice(null); setQuery(""); setContextMenu(null); setRoomContextMenu(null); onTabChange(values[index]!);
+                document.getElementById(`navigation-${values[index]}`)?.focus();
+              }}
+            >
+              <Icon weight={value === "chats" && tab === value ? "fill" : "light"} />
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>
+          <button type="button" onClick={() => { setFilterOpen(true); setNavigationOpen(false); }}><SearchIcon /><span>筛选聊天</span></button>
+          <button type="button" onClick={() => { setNavigationOpen(false); onOpenSettings(); }}><SettingsIcon /><span>设置</span></button>
+        </div>
+      </nav>
+      {searchOpen ? <ChatSearchDialog bots={sourceBots} rooms={sourceRooms} onSelectBot={onSelectBot} onSelectRoom={onSelectRoom} onClose={() => setSearchOpen(false)} /> : null}
+      {notice ? <div className="bot-action-notice" role="status">{notice}</div> : null}
+      {batchContextMenu && batchMenuInput ? (
+        <BatchContextMenu
+          label={tab === "chats" ? `移除 ${batchContextMenu.keys.length} 个聊天` : tab === "contacts" ? `删除 ${batchContextMenu.keys.length} 个联系人` : batchDeleteLabel(batchMenuInput)}
+          x={batchContextMenu.x}
+          y={batchContextMenu.y}
+          onClose={closeBatchContextMenu}
+          onDelete={() => setBatchDeleteTarget(batchContextMenu.keys)}
+        />
+      ) : null}
+      {contextBot && contextMenu ? (
+        <BotContextMenu
+          bot={contextBot}
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={closeContextMenu}
+          onPin={() => void perform(contextBot, () => onPinBot(contextBot, !contextBot.pinnedAt), contextBot.pinnedAt ? "已取消置顶。" : "Bot 已置顶。")}
+          onUnread={() => void perform(contextBot, () => onMarkBotUnread(contextBot, !contextBot.hasUnread), contextBot.hasUnread ? "已标为已读。" : "已标为未读。")}
+          onRename={() => beginRename(contextBot)}
+          onEdit={tab === "chats" ? undefined : () => onEditBot(contextBot)}
+          onDuplicate={() => void perform(contextBot, () => onDuplicateBot(contextBot), "副本已创建。")}
+          onCopyId={() => void perform(contextBot, () => onCopyBotId(contextBot), "对话 ID 已复制。")}
+          onHide={() => void perform(contextBot, () => onHideBot(contextBot, !contextBot.hiddenAt), contextBot.hiddenAt ? null : "聊天已移除，记录保留。")}
+          onClear={() => { const summary = summaryByKey.get(botKey(contextBot.id)); if (summary) onClearConversation(summary); }}
+          onDelete={() => setDeleteTarget(contextBot)}
+        />
+      ) : null}
+      {contextRoom && roomContextMenu ? (
+        <RoomContextMenu
+          room={contextRoom}
+          x={roomContextMenu.x}
+          y={roomContextMenu.y}
+          onClose={closeRoomContextMenu}
+          onPin={() => void performRoom(contextRoom, () => onPinRoom(contextRoom, !contextRoom.pinnedAt), contextRoom.pinnedAt ? "已取消置顶。" : "群聊已置顶。")}
+          onUnread={() => void performRoom(contextRoom, () => onMarkRoomUnread(contextRoom, !contextRoom.hasUnread), contextRoom.hasUnread ? "已标为已读。" : "已标为未读。")}
+          onRename={() => beginRoomRename(contextRoom)}
+          onCopyId={() => void performRoom(contextRoom, () => onCopyRoomId(contextRoom), "对话 ID 已复制。")}
+          onHide={() => void performRoom(contextRoom, () => onHideRoom(contextRoom, !contextRoom.hiddenAt), contextRoom.hiddenAt ? null : "聊天已移除，记录保留。")}
+          onClear={() => { const summary = summaryByKey.get(roomKey(contextRoom.id)); if (summary) onClearConversation(summary); }}
+          onArchive={() => void performRoom(contextRoom, () => onArchiveRoom(contextRoom), "群聊已归档。")}
+          onDelete={() => setRoomDeleteTarget(contextRoom)}
+        />
+      ) : null}
+
+      {deleteTarget ? (
+        <div className="bot-delete-backdrop" role="presentation">
+          <section
+            className="bot-delete-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="bot-delete-title"
+            aria-describedby="bot-delete-description"
+            onKeyDown={(event) => {
+              if (event.key !== "Tab") return;
+              if (event.shiftKey && document.activeElement === deleteCancelRef.current) {
+                event.preventDefault();
+                deleteConfirmRef.current?.focus();
+              } else if (!event.shiftKey && document.activeElement === deleteConfirmRef.current) {
+                event.preventDefault();
+                deleteCancelRef.current?.focus();
+              }
+            }}
+          >
+            <h2 id="bot-delete-title">删除“{deleteTarget.name}”？</h2>
+            <p id="bot-delete-description">这会永久删除该 Bot 的单聊记录，并将它移出群聊。群聊历史发言仍会保留。</p>
+            <div className="bot-delete-actions">
+              <button ref={deleteCancelRef} type="button" className="secondary-button" disabled={pendingBotId === deleteTarget.id} onClick={() => setDeleteTarget(null)}>取消</button>
+              <button
+                ref={deleteConfirmRef}
+                type="button"
+                className="danger-confirm-button"
+                disabled={pendingBotId === deleteTarget.id}
+                onClick={() => void perform(deleteTarget, () => onDeleteBot(deleteTarget), "Bot 已删除。").then((succeeded) => {
+                  if (succeeded) setDeleteTarget(null);
+                })}
+              >{pendingBotId === deleteTarget.id ? "删除中…" : "删除"}</button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {roomDeleteTarget ? (
+        <div className="bot-delete-backdrop" role="presentation">
+          <section
+            className="bot-delete-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="room-delete-title"
+            aria-describedby="room-delete-description"
+            onKeyDown={(event) => {
+              if (event.key !== "Tab") return;
+              if (event.shiftKey && document.activeElement === roomDeleteCancelRef.current) {
+                event.preventDefault();
+                roomDeleteConfirmRef.current?.focus();
+              } else if (!event.shiftKey && document.activeElement === roomDeleteConfirmRef.current) {
+                event.preventDefault();
+                roomDeleteCancelRef.current?.focus();
+              }
+            }}
+          >
+            <h2 id="room-delete-title">删除“{roomDeleteTarget.name}”？</h2>
+            <p id="room-delete-description">这会永久删除该群聊及聊天历史。群聊中的 Bot 不会被删除，此操作无法撤销。</p>
+            <div className="bot-delete-actions">
+              <button ref={roomDeleteCancelRef} type="button" className="secondary-button" disabled={pendingRoomId === roomDeleteTarget.id} onClick={() => setRoomDeleteTarget(null)}>取消</button>
+              <button
+                ref={roomDeleteConfirmRef}
+                type="button"
+                className="danger-confirm-button"
+                disabled={pendingRoomId === roomDeleteTarget.id}
+                onClick={() => void performRoom(roomDeleteTarget, () => onDeleteRoom(roomDeleteTarget), "群聊已删除。").then((succeeded) => {
+                  if (succeeded) setRoomDeleteTarget(null);
+                })}
+              >{pendingRoomId === roomDeleteTarget.id ? "删除中…" : "删除"}</button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {batchDeleteTarget && batchDialogInput ? (
+        <div className="bot-delete-backdrop" role="presentation">
+          <section
+            className="bot-delete-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="batch-delete-title"
+            aria-describedby="batch-delete-description"
+            onKeyDown={(event) => {
+              if (event.key !== "Tab") return;
+              if (event.shiftKey && document.activeElement === batchDeleteCancelRef.current) {
+                event.preventDefault();
+                batchDeleteConfirmRef.current?.focus();
+              } else if (!event.shiftKey && document.activeElement === batchDeleteConfirmRef.current) {
+                event.preventDefault();
+                batchDeleteCancelRef.current?.focus();
+              }
+            }}
+          >
+            <h2 id="batch-delete-title">{batchDialogTitle}</h2>
+            <p id="batch-delete-description">{batchDialogDescription}</p>
+            <div className="bot-delete-actions">
+              <button
+                ref={batchDeleteCancelRef}
+                type="button"
+                className="secondary-button"
+                disabled={batchDeletePending}
+                onClick={() => setBatchDeleteTarget(null)}
+              >取消</button>
+              <button
+                ref={batchDeleteConfirmRef}
+                type="button"
+                className="danger-confirm-button"
+                disabled={batchDeletePending}
+                onClick={() => void performBatchDelete()}
+              >{batchDeletePending ? "处理中…" : tab === "chats" ? "移除聊天" : "删除"}</button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+    </aside>
+  );
+}

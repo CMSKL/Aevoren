@@ -1,0 +1,142 @@
+import { removeTestDirectory } from "./test-cleanup";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { _electron as electron, expect, test } from "@playwright/test";
+import type { AevorenBotApi } from "@shared/contracts";
+import { closeInspector, openConversationMenu, openInspector } from "./navigation";
+
+test("creates, persists and restores a reliable fake-provider conversation", async () => {
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-bot-smoke-"));
+  const environment = {
+    ...process.env,
+    AEVOREN_BOT_USER_DATA_DIR: userDataDir,
+    AEVOREN_BOT_FAKE_PROVIDER: "1",
+  };
+
+  let application = await electron.launch({ args: ["."], cwd: process.cwd(), env: environment });
+  let page = await application.firstWindow();
+
+  await expect(page.getByRole("navigation", { name: "主导航", exact: true })).toBeVisible();
+  await expect(page).toHaveTitle("Aevoren");
+  expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.getTitle())).toBe("Aevoren");
+  expect(await application.evaluate(({ app }) => ({ name: app.getName(), userData: app.getPath("userData") }))).toEqual({ name: "Aevoren", userData: userDataDir });
+  if (process.platform === "darwin") {
+    const menu = await application.evaluate(({ Menu }) => {
+      const first = Menu.getApplicationMenu()?.items[0];
+      return { label: first?.label, entries: first?.submenu?.items.map(item => item.label) };
+    });
+    expect(menu.label).toBe("Aevoren");
+    expect(menu.entries).toEqual(expect.arrayContaining(["About Aevoren", "Hide Aevoren", "Quit Aevoren"]));
+  }
+  await expect(page.getByText("选择一个聊天", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "新建聊天" }).click();
+  await page.getByRole("button", { name: "创建新 Bot" }).click();
+  await openInspector(page);
+  await expect(page.getByRole("heading", { name: "新建 Bot" })).toBeVisible();
+  await expect(page.getByText("产品需求分析助手")).toHaveCount(0);
+  await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
+  await expect(page.locator(".contact-profile-hero .bot-avatar-icon")).toBeVisible();
+  await expect(page.getByLabel("模型供应商")).toBeHidden();
+  await page.screenshot({ path: "/tmp/aevoren-bot-settings-aligned.png" });
+
+  await openInspector(page, "models");
+  await page.getByLabel("模型供应商").selectOption("openai-compatible.default");
+  await expect(page.getByLabel("模型供应商")).toHaveValue("openai-compatible.default");
+  await page.getByLabel("Bot 模型").fill("smoke-model");
+  await page.getByLabel("Bot 模型").blur();
+  await expect(page.getByTestId("profile-save-status")).toContainText("已保存");
+  const capabilitySnapshot = await page.evaluate(async () => {
+    const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
+    const bots = await api.bots.list();
+    if (!bots.ok || !bots.data[0]) return bots;
+    return api.capabilities.getSnapshot({ botId: bots.data[0].id });
+  });
+  expect(capabilitySnapshot).toMatchObject({
+    ok: true,
+    data: {
+      availableTools: expect.arrayContaining(["web_search", "time_now", "weather_current"]),
+      capabilities: expect.arrayContaining([
+        expect.objectContaining({ id: "network.search", availability: "available" }),
+        expect.objectContaining({ id: "network.realtime-data", availability: "available" }),
+      ]),
+    },
+  });
+
+  await openInspector(page);
+  const description = page.getByRole("textbox", { name: "描述", exact: true });
+  await description.fill("把模糊想法整理成可评审的产品需求。");
+  await description.blur();
+  await expect(page.getByTestId("profile-save-status")).toContainText("已保存");
+
+  await closeInspector(page);
+  await page.getByLabel("消息").fill("做一个帮助团队整理产品需求的桌面应用。");
+  await page.getByRole("button", { name: "发送" }).click();
+  const assistant = page.locator("article.message-assistant").first();
+  await expect(assistant.locator("h2", { hasText: "背景" })).toBeVisible();
+  await expect(assistant.locator("ol > li")).toHaveCount(2);
+  await expect(assistant).not.toContainText("## 背景");
+  await expect(page.getByText("待确认事项", { exact: true })).toBeVisible();
+  await expect(page.locator("article.message-assistant")).toHaveAttribute("data-status", "completed");
+  await expect(page.getByRole("button", { name: /保存为 Markdown/u })).toHaveCount(0);
+
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
+  await openInspector(page);
+  await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
+  await closeInspector(page);
+  await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeHidden();
+  const menu = await openConversationMenu(page);
+  await expect(menu.getByRole("menuitem", { name: "展开详情面板", exact: true })).toHaveCount(0);
+  await expect(menu.getByRole("menuitem", { name: "Bot 设置", exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await openInspector(page);
+  await expect(page.getByRole("main", { name: "联系人资料", exact: true })).toBeVisible();
+  await closeInspector(page);
+
+  for (const [index, supplement] of ["补充目标用户和使用场景。", "补充验收标准和风险。"].entries()) {
+    await page.getByLabel("消息").fill(supplement);
+    await page.getByRole("button", { name: "发送" }).click();
+    await expect(page.locator("article.message-assistant")).toHaveCount(index + 2);
+    await expect(page.locator("article.message-assistant").last()).toHaveAttribute("data-status", "completed");
+  }
+  await expect.poll(() => page.locator(".transcript").evaluate((element) => element.scrollHeight - element.clientHeight))
+    .toBeGreaterThan(0);
+  await expect.poll(() => page.locator(".transcript").evaluate(
+    (element) => element.scrollHeight - element.scrollTop - element.clientHeight,
+  )).toBeLessThanOrEqual(2);
+  await expect(page.evaluate(() => typeof (window as unknown as { require?: unknown }).require)).resolves.toBe("undefined");
+
+  await page.screenshot({ path: join(tmpdir(), "aevoren-p0-a-main.png"), fullPage: true });
+  await openInspector(page);
+  await description.fill("关闭应用前未移焦，也必须可靠保存。");
+  await application.close();
+
+  const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
+  expect(database.prepare("SELECT COUNT(*) AS count FROM provider_instances").get()).toEqual({ count: 12 });
+  expect(database.prepare("SELECT provider_instance_id, model_id FROM bots LIMIT 1").get()).toEqual({
+    provider_instance_id: "openai-compatible.default",
+    model_id: "smoke-model",
+  });
+  expect(database.prepare("SELECT MIN(json_extract(prompt_manifest_json, '$.schemaVersion')) AS min_version, MAX(json_extract(prompt_manifest_json, '$.schemaVersion')) AS max_version FROM runtime_runs").get()).toEqual({
+    min_version: 4,
+    max_version: 4,
+  });
+  database.close();
+
+  application = await electron.launch({ args: ["."], cwd: process.cwd(), env: environment });
+  page = await application.firstWindow();
+  await expect(page.getByRole("heading", { name: "新建 Bot" })).toBeVisible();
+  await expect(page.getByText("做一个帮助团队整理产品需求的桌面应用。")).toBeVisible();
+  await expect(page.getByText("待确认事项", { exact: true }).last()).toBeVisible();
+  await expect(page.locator("#conversation-inspector")).toHaveCount(0);
+  await openInspector(page);
+  await expect(page.getByRole("textbox", { name: "描述", exact: true })).toHaveValue("关闭应用前未移焦，也必须可靠保存。");
+  await expect(page.getByLabel("模型供应商")).toBeHidden();
+  await openInspector(page, "models");
+  await expect(page.getByLabel("模型供应商")).toHaveValue("openai-compatible.default");
+  await expect(page.getByLabel("Bot 模型")).toHaveValue("smoke-model");
+
+  await application.close();
+  removeTestDirectory(userDataDir);
+});

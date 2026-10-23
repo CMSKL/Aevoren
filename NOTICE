@@ -1,0 +1,15 @@
+Aevoren
+Copyright 2026 Aevoren contributors
+
+The model CLI provider and adapter work was informed by the open-source edition
+of OpenMausBot, Copyright 2026 Milind Soni and OpenMausBot contributors, made
+available under the Apache License, Version 2.0. No code from OpenMausBot's
+separately licensed enterprise directory is intended to be included.
+
+Third-party package inventory is recorded in THIRD_PARTY_NOTICES.md. Product and
+service names used for interoperability remain the property of their respective
+owners; see TRADEMARKS.md.
+
+## Maintainer redistribution attestation
+
+On 2026-09-18, the project maintainer explicitly directed the repository to retain and redistribute the legacy Aevoren face icon after the left-facing adjustment. This records project-level permission to include the asset with Aevoren; it is not a legal opinion, independent-authorship certificate, or trademark clearance. The maintainer should retain available source and permission evidence and review the trademark notice in TRADEMARKS.md before redistribution.
