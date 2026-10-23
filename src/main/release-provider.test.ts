@@ -27,11 +27,11 @@ describe("GitHub release provider", () => {
     expect(provider.createGitHubPublishConfiguration("1.0.0", false)).toBeNull();
   });
 
-  it("pins stable releases to the public Aevoren Bot repository", () => {
+  it("pins stable releases to the public Aevoren repository", () => {
     expect(provider.createGitHubPublishConfiguration("1.2.3", true)).toEqual({
       provider: "github",
       owner: "CMSKL",
-      repo: "Aevoren-Bot",
+      repo: "Aevoren",
       private: false,
       channel: "latest",
       releaseType: "release",
