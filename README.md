@@ -10,7 +10,7 @@ Chat with persistent Bots, bring them together in groups, organize documents and
 
 [简体中文](README.zh-CN.md) · English
 
-[![Version](https://img.shields.io/badge/version-v0.3.0--beta.44-2563eb)](https://github.com/CMSKL/Aevoren/releases/tag/v0.3.0-beta.44) [![Beta CI](https://github.com/CMSKL/Aevoren/actions/workflows/ci.yml/badge.svg?branch=beta)](https://github.com/CMSKL/Aevoren/actions/workflows/ci.yml?query=branch%3Abeta) [![License](https://img.shields.io/badge/license-Apache--2.0-16a34a)](LICENSE)
+[![Version](https://img.shields.io/badge/version-v0.1.0-2563eb)](https://github.com/CMSKL/Aevoren/releases) [![Beta CI](https://github.com/CMSKL/Aevoren/actions/workflows/ci.yml/badge.svg?branch=beta)](https://github.com/CMSKL/Aevoren/actions/workflows/ci.yml?query=branch%3Abeta) [![License](https://img.shields.io/badge/license-Apache--2.0-16a34a)](LICENSE)
 
 [Main interface](#main-chat-interface) · [Computer use](#give-ai-a-computer-to-work-in) · [Download](#download) · [Get started](#get-started) · [Screenshots](#screenshots) · [Features](#features) · [Develop from source](#develop-from-source) · [Project resources](#project-resources)
 
@@ -44,25 +44,25 @@ Bot and group details have one **Computer** entry. **Settings → Computer** man
 
 ## Version and availability
 
-This homepage introduces **v0.3.0-beta.44**, prepared on **October 22, 2026**. It adopts the Aevoren product name and improves task-requirement recognition, verified file receipts, bounded Docker desktop capacity, delegated task waiting, worker health and safe failure recovery. The [Release](https://github.com/CMSKL/Aevoren/releases/tag/v0.3.0-beta.44) records actual publication, signing and validation. Development continues on `dev`; validated changes are promoted through `beta` to `master`.
+The first release in this repository is being prepared as **v0.1.0**, using the current code. Subsequent releases follow Semantic Versioning, starting with `0.1.1` for fixes and `0.2.0` for new functionality. Published installers, signing and validation details will appear in [Releases](https://github.com/CMSKL/Aevoren/releases). Development continues on `dev`; validated changes are promoted through `beta` to `master`.
 
 The original marketing scenario remains **partially completed**. A model that does not write the requested files is not counted as successful; Pro model comparison is deferred. Six parallel replies do not establish capacity for six simultaneous desktops. Parent 16-round and computer 100-action/30-minute limits remain unchanged.
 
 | What you want to do | Start here |
 | --- | --- |
-| Install and use the app | Download the [beta.44 Release](https://github.com/CMSKL/Aevoren/releases/tag/v0.3.0-beta.44), then follow the setup steps below |
+| Install and use the app | Check [Releases](https://github.com/CMSKL/Aevoren/releases) for the first v0.1.0 installer, then follow the setup steps below |
 | Explore the product | Browse the screenshots, [feature guide](#features) and [setup steps](#get-started) |
-| Work on the source | Branch from `dev` and follow [Develop from source](#develop-from-source) |
-| Review testing, signing and upgrade evidence | Read the [release notes](https://github.com/CMSKL/Aevoren/releases/tag/v0.3.0-beta.44) and [Beta CI results](https://github.com/CMSKL/Aevoren/actions/workflows/ci.yml?query=branch%3Abeta) |
+| Work on the source | Work directly on `dev` and follow [Develop from source](#develop-from-source) |
+| Review testing, signing and upgrade evidence | Read the [release notes](https://github.com/CMSKL/Aevoren/releases) and [Beta CI results](https://github.com/CMSKL/Aevoren/actions/workflows/ci.yml?query=branch%3Abeta) |
 
-> Aevoren is currently in Beta. macOS Apple silicon has signed, notarized installers; Windows has an unsigned manual validation installer. Background browser and standard AppKit controls have controlled test coverage. This does not promise compatibility with every Mac app or complete background tasks through every model. Third-party account operations, Windows Docker and actual automatic-update installation retain separate validation boundaries.
+> Aevoren is under active development. This repository's first installer release is pending. Background browser and standard AppKit controls have controlled test coverage. This does not promise compatibility with every Mac app or complete background tasks through every model. Third-party account operations, Windows Docker and actual automatic-update installation retain separate validation boundaries.
 
 ## Download
 
 | Platform | Download and status |
 | --- | --- |
-| **macOS 13+ · Apple silicon** | [Download DMG](https://github.com/CMSKL/Aevoren/releases/download/v0.3.0-beta.44/Aevoren-0.3.0-beta.44-arm64.dmg) · [All release assets and SHA-256 checksums](https://github.com/CMSKL/Aevoren/releases/tag/v0.3.0-beta.44). The release workflow requires Developer ID signing, Apple notarization and isolated beta.42 → beta.44 bundle-replacement validation |
-| **Windows 10/11 · x64** | [Beta CI installer downloads](https://github.com/CMSKL/Aevoren/actions/workflows/ci.yml?query=branch%3Abeta). Choose the successful beta.44 run and its unsigned x64 installer artifact. GitHub sign-in is required; retention is 30 days. No Windows automatic-update feed is published |
+| **macOS 13+ · Apple silicon** | v0.1.0 DMG pending. Published installers and SHA-256 checksums will appear in [Releases](https://github.com/CMSKL/Aevoren/releases). The release workflow requires Developer ID signing and Apple notarization |
+| **Windows 10/11 · x64** | [Beta CI installer downloads](https://github.com/CMSKL/Aevoren/actions/workflows/ci.yml?query=branch%3Abeta). Choose a successful run for the current package version and its unsigned x64 installer artifact. GitHub sign-in is required; retention is 30 days. No Windows automatic-update feed is published |
 | Intel macOS / Linux desktop | Not currently tested or released |
 | iOS / Android | Not implemented |
 
@@ -303,8 +303,8 @@ Internal guides, plans, research and validation records in `docs/` remain local 
 
 ## Contributing, maintenance and license
 
-Only three branches exist: **`dev`**, **`beta`** and **`master`**. All work is committed and pushed directly to `dev`; no feature branches are used. Validated changes are promoted `dev` → `beta` → `master`, with the testing deployment validated on `beta` before promotion. Release tags and titles must both be `v<package.json version>`.
+Only three branches exist: **`dev`**, **`beta`** and **`master`**. All work is committed and pushed directly to `dev`; no feature branches are used. Validated changes are promoted `dev` → `beta` → `master`, with the testing deployment validated on `beta` before promotion. Release numbering starts at `0.1.0` in this repository. Release tags and titles must both be `v<package.json version>`, beginning with `v0.1.0`. Historical branches and archive tags from the previous repository must not be pushed here.
 
 Allen and GitHub [CMSKL](https://github.com/CMSKL) are the same maintainer. Allen leads the project, with AI contributing development work. The [personal project record](https://www.minimalstudio.cn/allen/projects/aevoren.html) documents those roles and earlier project stages.
 
-Aevoren is licensed under the [Apache License 2.0](LICENSE). The project name and icon are covered by the [trademark notice](https://github.com/CMSKL/Aevoren/blob/v0.3.0-beta.44/TRADEMARKS.md); dependency licenses are listed in [Third-party notices](https://github.com/CMSKL/Aevoren/blob/v0.3.0-beta.44/THIRD_PARTY_NOTICES.md).
+Aevoren is licensed under the [Apache License 2.0](LICENSE). The project name and icon are covered by the [trademark notice](TRADEMARKS.md); dependency licenses are listed in [Third-party notices](THIRD_PARTY_NOTICES.md).

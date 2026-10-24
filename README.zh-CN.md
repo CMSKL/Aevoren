@@ -10,7 +10,7 @@
 
 简体中文 · [English](README.md)
 
-[![版本](https://img.shields.io/badge/version-v0.3.0--beta.44-2563eb)](https://github.com/CMSKL/Aevoren/releases/tag/v0.3.0-beta.44) [![Beta CI](https://github.com/CMSKL/Aevoren/actions/workflows/ci.yml/badge.svg?branch=beta)](https://github.com/CMSKL/Aevoren/actions/workflows/ci.yml?query=branch%3Abeta) [![许可证](https://img.shields.io/badge/license-Apache--2.0-16a34a)](LICENSE)
+[![版本](https://img.shields.io/badge/version-v0.1.0-2563eb)](https://github.com/CMSKL/Aevoren/releases) [![Beta CI](https://github.com/CMSKL/Aevoren/actions/workflows/ci.yml/badge.svg?branch=beta)](https://github.com/CMSKL/Aevoren/actions/workflows/ci.yml?query=branch%3Abeta) [![许可证](https://img.shields.io/badge/license-Apache--2.0-16a34a)](LICENSE)
 
 [主界面](#主聊天界面) · [电脑能力](#让-ai-直接使用电脑) · [下载安装](#下载安装) · [快速上手](#快速上手) · [产品截图](#产品截图) · [功能详解](#功能详解) · [源码开发](#源码开发) · [项目资源](#项目资源)
 
@@ -44,25 +44,25 @@ Bot 与群详情统一使用一个**电脑**入口。**设置 → 电脑**管理
 
 ## 版本与适用范围
 
-本页介绍 **v0.3.0-beta.44**，发行准备日期为 **2026-10-22**：产品更名为 Aevoren，修正要求识别与真实文件回执，改善 Docker 桌面容量预检、电脑子任务等待、健康状态和安全恢复。[Release](https://github.com/CMSKL/Aevoren/releases/tag/v0.3.0-beta.44) 记录实际公开、签名和验收状态。开发继续在 `dev`，本轮不晋级 `master`。
+本仓库首个发行版本准备定为 **v0.1.0**，使用当前代码。后续遵循语义化版本规范：修复从 `0.1.1` 开始递增，新增功能使用 `0.2.0` 等版本。正式安装包、签名和验收信息以 [Releases](https://github.com/CMSKL/Aevoren/releases) 为准。所有开发直接在 `dev` 进行，验证后依次晋级 `beta`、`master`。
 
 原营销场景仍**部分走通**；模型未真实写出要求的文件不能算成功，Pro 模型对照留到下一批。六成员并行回复不代表当前 Docker 内存能容纳六台桌面。主任务 16 轮、电脑每段 100 动作／30 分钟限制保持。
 
 | 你要做什么 | 从这里开始 |
 | --- | --- |
-| 安装使用 | 下载 [beta.44 Release](https://github.com/CMSKL/Aevoren/releases/tag/v0.3.0-beta.44)，再看下方上手步骤 |
+| 安装使用 | 在 [Releases](https://github.com/CMSKL/Aevoren/releases) 查看首个 v0.1.0 安装包的发布状态，再看下方上手步骤 |
 | 了解产品 | 查看截图、[功能详解](#功能详解)与[快速上手](#快速上手) |
-| 修改源码 | 从 `dev` 创建分支，按[源码开发](#源码开发)运行 |
-| 核对测试、签名与升级证据 | 阅读 [Release 说明](https://github.com/CMSKL/Aevoren/releases/tag/v0.3.0-beta.44)和 [Beta CI 结果](https://github.com/CMSKL/Aevoren/actions/workflows/ci.yml?query=branch%3Abeta) |
+| 修改源码 | 直接在 `dev` 开发，按[源码开发](#源码开发)运行 |
+| 核对测试、签名与升级证据 | 阅读 [Release 说明](https://github.com/CMSKL/Aevoren/releases)和 [Beta CI 结果](https://github.com/CMSKL/Aevoren/actions/workflows/ci.yml?query=branch%3Abeta) |
 
-> 当前仍为 Beta。macOS Apple silicon 提供签名、公证的安装包；Windows 提供未签名手动验证包。后台浏览器与标准 AppKit 控件已有受控验证，不代表所有 Mac 应用或所有模型的完整后台任务均已验证。第三方账号操作、Windows Docker 与真实自动更新安装仍有独立的验证边界。
+> 产品仍在持续开发中，本仓库的首个安装包尚未发布。后台浏览器与标准 AppKit 控件已有受控验证，不代表所有 Mac 应用或所有模型的完整后台任务均已验证。第三方账号操作、Windows Docker 与真实自动更新安装仍有独立的验证边界。
 
 ## 下载安装
 
 | 平台 | 下载与状态 |
 | --- | --- |
-| **macOS 13+ · Apple silicon** | [下载 DMG](https://github.com/CMSKL/Aevoren/releases/download/v0.3.0-beta.44/Aevoren-0.3.0-beta.44-arm64.dmg) · [全部 Release 文件及 SHA-256](https://github.com/CMSKL/Aevoren/releases/tag/v0.3.0-beta.44)。发行流程要求 Developer ID 签名、Apple 公证与 beta.42 → beta.44 隔离包替换升级验证 |
-| **Windows 10/11 · x64** | [Beta CI 安装包入口](https://github.com/CMSKL/Aevoren/actions/workflows/ci.yml?query=branch%3Abeta)。选择通过的 beta.44 运行及其 x64 未签名安装包；需登录 GitHub，保留 30 天。Windows 不提供自动更新清单 |
+| **macOS 13+ · Apple silicon** | v0.1.0 DMG 待发布。正式安装包及 SHA-256 将提供在 [Releases](https://github.com/CMSKL/Aevoren/releases)。发行流程要求 Developer ID 签名与 Apple 公证 |
+| **Windows 10/11 · x64** | [Beta CI 安装包入口](https://github.com/CMSKL/Aevoren/actions/workflows/ci.yml?query=branch%3Abeta)。选择当前版本通过的运行及其 x64 未签名安装包；需登录 GitHub，保留 30 天。Windows 不提供自动更新清单 |
 | Intel macOS / Linux 桌面版 | 暂未测试或发行 |
 | iOS / Android | 暂未实现 |
 
@@ -303,8 +303,8 @@ build/             安装包与发布配置
 
 ## 贡献、维护与许可证
 
-仓库只保留 **`dev`**、**`beta`**、**`master`** 三个分支。所有开发直接提交到 `dev`，不使用功能分支。验证通过后按 `dev` → `beta` → `master` 晋级，`beta` 需完成测试环境验收。Release 标签与标题均使用 `v<package.json version>`。
+仓库只保留 **`dev`**、**`beta`**、**`master`** 三个分支。所有开发直接提交到 `dev`，不使用功能分支。验证通过后按 `dev` → `beta` → `master` 晋级，`beta` 需完成测试环境验收。本仓库的版本编号从 `0.1.0` 开始，Release 标签与标题均使用 `v<package.json version>`，首个为 `v0.1.0`。旧仓库的历史分支与归档标签不得推送到本仓库。
 
 Allen 与 GitHub [CMSKL](https://github.com/CMSKL) 是同一位维护者。项目由 Allen 主导，AI 参与开发；[个人项目记录](https://www.minimalstudio.cn/allen/projects/aevoren.html)保留角色说明与阶段记录。
 
-Aevoren 使用 [Apache License 2.0](LICENSE)。项目名称和图标受[商标说明](https://github.com/CMSKL/Aevoren/blob/v0.3.0-beta.44/TRADEMARKS.md)约束；依赖许可见[第三方许可清单](https://github.com/CMSKL/Aevoren/blob/v0.3.0-beta.44/THIRD_PARTY_NOTICES.md)。
+Aevoren 使用 [Apache License 2.0](LICENSE)。项目名称和图标受[商标说明](TRADEMARKS.md)约束；依赖许可见[第三方许可清单](THIRD_PARTY_NOTICES.md)。

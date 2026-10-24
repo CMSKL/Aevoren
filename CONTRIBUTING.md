@@ -31,8 +31,13 @@ The Fake Provider is deterministic and requires no API key. Never put real crede
 2. Commit and push to `dev`.
 3. Maintainers promote validated changes from `dev` to `beta`, then from `beta` to `master`.
 4. Do not target `master` directly except through the documented release promotion flow.
+5. Do not push historical branches or archive tags from the previous repository, including `codex/` branches and `archive/codex-*` tags.
 
 Use clear commit messages such as `fix: ...`, `feat: ...`, `docs: ...`, or `test: ...`.
+
+## Release versions
+
+This repository starts release numbering at `0.1.0`, using the current code. Follow Semantic Versioning for subsequent releases: `0.1.1` for fixes and `0.2.0` for new functionality. Release tags and titles must both be exactly `v<package.json version>`, beginning with `v0.1.0`. The first release is pending until its installers have completed the release checks.
 
 ## Required checks
 
