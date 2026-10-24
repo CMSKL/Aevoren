@@ -30,7 +30,7 @@ JSZip 3.10.2 declares MIT OR GPL-3.0-or-later. Aevoren selects the offered MIT a
 | argparse | 2.0.1 | Python-2.0 | [link](https://github.com/nodeca/argparse#readme) |
 | bail | 2.0.2 | MIT | [link](https://github.com/wooorm/bail#readme) |
 | base64-js | 1.5.1 | MIT | [link](https://github.com/beatgammit/base64-js) |
-| body-parser | 2.3.0 | MIT | [link](https://github.com/expressjs/body-parser#readme) |
+| body-parser | 2.4.0 | MIT | [link](https://github.com/expressjs/body-parser#readme) |
 | builder-util-runtime | 9.7.0 | MIT | [link](https://github.com/electron-userland/electron-builder) |
 | bytes | 3.1.2 | MIT | [link](https://github.com/visionmedia/bytes.js#readme) |
 | call-bind-apply-helpers | 1.0.2 | MIT | [link](https://github.com/ljharb/call-bind-apply-helpers#readme) |
@@ -187,6 +187,7 @@ JSZip 3.10.2 declares MIT OR GPL-3.0-or-later. Aevoren selects the offered MIT a
 | property-information | 7.2.0 | MIT | [link](https://github.com/wooorm/property-information#readme) |
 | proxy-addr | 2.0.8 | MIT | [link](https://github.com/jshttp/proxy-addr#readme) |
 | qs | 6.16.0 | BSD-3-Clause | [link](https://github.com/ljharb/qs) |
+| qs | 6.16.1 | BSD-3-Clause | [link](https://github.com/ljharb/qs) |
 | range-parser | 1.3.0 | MIT | [link](https://github.com/jshttp/range-parser#readme) |
 | raw-body | 3.0.2 | MIT | [link](https://github.com/stream-utils/raw-body#readme) |
 | react | 19.3.0 | MIT | [link](https://react.dev/) |
@@ -229,7 +230,7 @@ JSZip 3.10.2 declares MIT OR GPL-3.0-or-later. Aevoren selects the offered MIT a
 | trough | 2.2.0 | MIT | [link](https://github.com/wooorm/trough#readme) |
 | type-is | 2.1.0 | MIT | [link](https://github.com/jshttp/type-is#readme) |
 | underscore | 1.13.8 | MIT | [link](https://underscorejs.org) |
-| undici | 7.29.1 | MIT | [link](https://undici.nodejs.org) |
+| undici | 7.30.1 | MIT | [link](https://undici.nodejs.org) |
 | unified | 11.0.5 | MIT | [link](https://unifiedjs.com) |
 | unist-util-is | 6.0.1 | MIT | [link](https://github.com/syntax-tree/unist-util-is#readme) |
 | unist-util-position | 5.0.0 | MIT | [link](https://github.com/syntax-tree/unist-util-position#readme) |
@@ -247,7 +248,7 @@ JSZip 3.10.2 declares MIT OR GPL-3.0-or-later. Aevoren selects the offered MIT a
 | ws | 8.22.0 | MIT | [link](https://github.com/websockets/ws) |
 | xmlbuilder | 10.1.1 | MIT | [link](http://github.com/oozcitak/xmlbuilder-js) |
 | yaml | 2.9.1 | ISC | [link](https://eemeli.org/yaml/) |
-| zod | 4.6.1 | MIT | [link](https://zod.dev) |
+| zod | 4.6.6 | MIT | [link](https://zod.dev) |
 | zod-to-json-schema | 3.25.2 | ISC | [link](https://github.com/StefanTerdell/zod-to-json-schema#readme) |
 | zwitch | 2.0.4 | MIT | [link](https://github.com/wooorm/zwitch#readme) |
 
