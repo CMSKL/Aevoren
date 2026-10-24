@@ -69,6 +69,7 @@ test("decrypts ciphertext from the established Aevoren Bot safeStorage identity 
     environment.AEVOREN_BOT_DB_PATH = databasePath;
     environment.AEVOREN_BOT_USE_SYSTEM_SAFE_STORAGE = "1";
     application = await electron.launch({ args: ["."], cwd: process.cwd(), env: environment });
+    await application.evaluate(({ app }) => app.whenReady());
     expect(await application.evaluate(({ app }) => app.getName())).toBe("Aevoren");
     expect(await application.evaluate(({ app }) => app.commandLine.hasSwitch("use-mock-keychain"))).toBe(false);
     const page = await application.firstWindow();
