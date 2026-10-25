@@ -48,7 +48,7 @@ describe("library surfaces", () => {
   });
 
   it("adds accessible library tabs to contacts without inventing a private session scope", () => {
-    const html = renderToStaticMarkup(<ContactDetail bot={bot} rooms={[]} busy={false} workspaceIds={[]} onSend={async () => true} onBotUpdated={() => undefined} onAddToRoom={async () => true} onOpenModelSettings={() => undefined} onOpenBots={() => undefined} />);
+    const html = renderToStaticMarkup(<ContactDetail bot={bot} rooms={[]} busy={false} onSend={async () => true} onBotUpdated={() => undefined} onAddToRoom={async () => true} onOpenModelSettings={() => undefined} onOpenBots={() => undefined} />);
     expect(html).toContain('id="contact-bot-one-library-tab"');
     expect(html).toContain('aria-controls="contact-bot-one-library-panel"');
     expect(html).toContain('id="contact-bot-one-skill-panel"');
@@ -62,7 +62,7 @@ describe("library surfaces", () => {
       members: [{ roomId: "room-one", botId: bot.id, position: 1, bot }],
       session: { id: "session-group", botId: null, roomId: "room-one", kind: "MAIN", generation: 1, createdAt: bot.createdAt, updatedAt: bot.updatedAt },
     };
-    const html = renderToStaticMarkup(<RoomInspector detail={detail} bots={[bot]} conversationWorkspace={{ projects: [], projectId: null, pending: false, error: null, onChange: () => undefined }} active={false} mobileOpen={false} onDetailUpdated={() => undefined} onError={() => undefined} onOpenBot={() => undefined} onMobileClose={() => undefined} />);
+    const html = renderToStaticMarkup(<RoomInspector detail={detail} bots={[bot]} active={false} mobileOpen={false} onDetailUpdated={() => undefined} onError={() => undefined} onOpenBot={() => undefined} onMobileClose={() => undefined} />);
     expect(html).toContain('aria-label="群聊配置"');
     expect(html).toContain('aria-controls="room-room-one-library-panel"');
     expect(html).toContain('id="room-room-one-skill-panel"');

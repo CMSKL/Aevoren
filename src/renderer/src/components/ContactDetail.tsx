@@ -28,7 +28,6 @@ type Props = {
   active?: boolean;
   rooms: Room[];
   busy: boolean;
-  workspaceIds: string[];
   editingRequested?: number;
   librarySessionId?: string;
   onUseResource?(reference: ResourceReference, text?: string): void;
@@ -49,7 +48,7 @@ type ContactProfileProps = Props & {
 };
 
 const ContactProfile = forwardRef<ContactDetailHandle, ContactProfileProps>(function ContactProfile(
-  { bot, active = true, rooms, busy, workspaceIds, librarySessionId, onUseResource, onUseMedia, onBotUpdated, onAddToRoom, onLocalError, onSaveStatusChange, onOpenModelSettings }, ref,
+  { bot, active = true, rooms, busy, librarySessionId, onUseResource, onUseMedia, onBotUpdated, onAddToRoom, onLocalError, onSaveStatusChange, onOpenModelSettings }, ref,
 ) {
   const [selectedRoomId, setSelectedRoomId] = useState("");
   const [pending, setPending] = useState(false);
@@ -135,7 +134,7 @@ const ContactProfile = forwardRef<ContactDetailHandle, ContactProfileProps>(func
         { id: "models", label: "模型与能力" }, { id: "memory", label: "记忆" }, { id: "skill", label: "Skill" },
         { id: "environment", label: "高级工具" }, { id: "apps", label: "应用" },
       ]} primary={["profile", "library", "computer"]} value={tab} disabled={changingTab} onChange={next => changeTab(next as ProfileTab)} />
-      <div hidden={tab === "library" || tab === "skill" || tab === "environment" || tab === "computer" || tab === "apps"}><ProfileInspector ref={editorRef} bot={bot} workspaceIds={workspaceIds} activeTab={tab === "models" || tab === "memory" ? tab : "profile"} editing={editing} onBotUpdated={onBotUpdated} onError={onLocalError} onSaveStatusChange={onSaveStatusChange} onOpenModelSettings={onOpenModelSettings} /></div>
+      <div hidden={tab === "library" || tab === "skill" || tab === "environment" || tab === "computer" || tab === "apps"}><ProfileInspector ref={editorRef} bot={bot} activeTab={tab === "models" || tab === "memory" ? tab : "profile"} editing={editing} onBotUpdated={onBotUpdated} onError={onLocalError} onSaveStatusChange={onSaveStatusChange} onOpenModelSettings={onOpenModelSettings} /></div>
       <div id={`contact-${bot.id}-library-panel`} role="tabpanel" aria-labelledby={`contact-${bot.id}-library-tab`} hidden={tab !== "library"} className="contact-tab-panel">
         {librarySessionId ? <LibraryPanel ref={documentsRef} sessionId={librarySessionId} kind="document" active={active && tab === "library"} busy={!onUseResource} onUse={(reference, text) => onUseResource?.(reference, text)} /> : <p className="library-empty" role="status">正在读取当前 Bot 的私聊资料范围…</p>}
         {librarySessionId ? <MediaLibraryPanel key={librarySessionId} sessionId={librarySessionId} active={active && tab === "library"} busy={!onUseMedia} onUse={reference => onUseMedia?.(reference)} /> : null}

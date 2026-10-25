@@ -223,12 +223,8 @@ export const RunFailureCard = memo(function RunFailureCard({
 
 export const ArtifactStatusBar = memo(function ArtifactStatusBar({
   writes,
-  onRevealWorkspace,
-  onOpenWorkspaces,
 }: {
   writes: ToolInvocation[];
-  onRevealWorkspace(workspaceId: string, path: string): void;
-  onOpenWorkspaces(): void;
 }): React.JSX.Element | null {
   const artifacts = conversationArtifacts(writes);
   if (artifacts.length === 0) return null;
@@ -239,9 +235,6 @@ export const ArtifactStatusBar = memo(function ArtifactStatusBar({
           <ArtifactCard
             artifact={artifact}
             key={artifact.id}
-            onOpen={() => artifact.invocation.workspaceId
-              ? onRevealWorkspace(artifact.invocation.workspaceId, artifact.invocation.targetPath)
-              : onOpenWorkspaces()}
           />
         ))}
       </div>
@@ -260,7 +253,7 @@ export const ArtifactCard = memo(function ArtifactCard({
   onOpen,
 }: {
   artifact: ConversationArtifact;
-  onOpen(): void;
+  onOpen?(): void;
 }): React.JSX.Element {
   const size = formatArtifactBytes(artifact.bytes);
   const typeLabel = artifact.extension === "MD" ? "Markdown" : artifact.extension ?? "文件";
@@ -272,7 +265,7 @@ export const ArtifactCard = memo(function ArtifactCard({
         <small className="artifact-card-metadata"><span>{typeLabel}{size ? ` · ${size}` : ""}</span><span className="artifact-card-saved"><CheckCircleIcon weight="fill" />已保存</span></small>
         <code className="artifact-card-path" title={artifact.invocation.targetPath}>{artifact.invocation.targetPath}</code>
       </span>
-      <button type="button" className="secondary-button" aria-label="打开文件位置" title={artifact.invocation.targetPath} onClick={onOpen}>打开</button>
+      {onOpen ? <button type="button" className="secondary-button" aria-label="打开文件位置" title={artifact.invocation.targetPath} onClick={onOpen}>打开</button> : null}
     </article>
   );
 });

@@ -8,7 +8,7 @@ import type { AevorenBotApi } from "../../src/shared/contracts";
 import { AppRepository } from "../../src/main/database";
 import { WorkspaceService } from "../../src/main/workspace-service";
 import { removeTestDirectory } from "./test-cleanup";
-import { openComposerTools, openConversationFiles, openWorkspaceTab, selectNavigationTab } from "./navigation";
+import { openComposerTools } from "./navigation";
 
 // Browser plugin not available. These tests use hidden real Electron, isolated
 // SQLite, actual files and unchanged IPC handlers. UI-only permission cases do
@@ -49,8 +49,6 @@ async function fixture() {
   } finally { repository.close(); }
 }
 
-type Fixture = Awaited<ReturnType<typeof fixture>>;
-
 async function launch(data: string) {
   const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
   for (const key of Object.keys(env)) if (key.startsWith("AEVOREN_BOT_FAKE_")) delete env[key];
@@ -73,139 +71,6 @@ async function close(application: ElectronApplication): Promise<void> {
   } catch { if (application.process().exitCode === null) application.process().kill("SIGKILL"); }
   finally { if (timer) clearTimeout(timer); }
 }
-
-function scope(f: Fixture, sessionId: string) {
-  const database = new DatabaseSync(f.path, { readOnly: true });
-  try {
-    return {
-      project: database.prepare("SELECT project_id FROM conversation_metadata WHERE session_id = ?").get(sessionId),
-      grants: database.prepare("SELECT * FROM session_workspace_grants WHERE session_id = ? ORDER BY workspace_id").all(sessionId),
-    };
-  } finally { database.close(); }
-}
-
-async function closeFiles(page: Page): Promise<void> {
-  const close = page.getByRole("button", { name: "关闭会话成果", exact: true });
-  if (await page.locator(".task-details-shelf").isVisible()) await close.last().click();
-  await expect(page.locator(".task-details-shelf")).toBeHidden();
-}
-
-async function checkTarget(page: Page, name: string): Promise<void> {
-  const dialog = page.getByRole("dialog", { name: "工作区权限", exact: true });
-  await expect(dialog).toBeVisible();
-  await expect(dialog.locator(".workspace-row")).toHaveCount(1);
-  await expect(dialog.locator(".workspace-row strong")).toHaveText(name);
-}
-
-test("UX-01 chat file management targets its granted B folder before and after managing sidebar A, without changing grants", async () => {
-  const f = await fixture();
-  const initial = scope(f, f.bound.session.id);
-  const sourceBytes = readFileSync(join(f.bRoot, "产品说明.md"));
-  let application: ElectronApplication | undefined;
-  try {
-    const launched = await launch(f.data);
-    application = launched.application;
-    const page = launched.page;
-    const errors: string[] = [];
-    page.on("pageerror", error => errors.push(error.message));
-    page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
-    await expect(page.getByRole("heading", { name: "B文件助手", exact: true })).toBeVisible();
-    await openConversationFiles(page);
-    await page.locator(".task-details-shelf").getByRole("button", { name: "管理文件夹", exact: true }).click();
-    await checkTarget(page, f.b.workspace.name);
-    await page.getByRole("dialog", { name: "工作区权限" }).getByRole("button", { name: "完成", exact: true }).click();
-    await closeFiles(page);
-    await openWorkspaceTab(page);
-    await page.getByRole("button", { name: `管理工作区 ${f.a.workspace.name}`, exact: true }).click();
-    await checkTarget(page, f.a.workspace.name);
-    await page.getByRole("dialog", { name: "工作区权限" }).getByRole("button", { name: "完成", exact: true }).click();
-    await selectNavigationTab(page, "聊天");
-    await expect(page.getByRole("heading", { name: "B文件助手", exact: true })).toBeVisible();
-    await openConversationFiles(page);
-    await page.locator(".task-details-shelf").getByRole("button", { name: "管理文件夹", exact: true }).click();
-    await checkTarget(page, f.b.workspace.name);
-    const dialog = page.getByRole("dialog", { name: "工作区权限", exact: true });
-    await dialog.getByLabel("允许 Bot 新建 Markdown/CSV", { exact: true }).check();
-    await expect(dialog.getByLabel("允许 Bot 新建 Markdown/CSV", { exact: true })).toBeChecked();
-    await expect.poll(async () => {
-      const state = await page.evaluate(() => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.workspaces.list());
-      return state.ok ? state.data.map(workspace => ({ id: workspace.id, write: workspace.writeEnabled })).sort((left, right) => left.id.localeCompare(right.id)) : null;
-    }).toEqual([{ id: f.a.workspace.id, write: false }, { id: f.b.workspace.id, write: true }].sort((left, right) => left.id.localeCompare(right.id)));
-    expect(scope(f, f.bound.session.id)).toEqual(initial);
-    expect(readFileSync(join(f.bRoot, "产品说明.md"))).toEqual(sourceBytes);
-    await page.screenshot({ path: join(evidenceRoot, "aevoren-ux01-correct-b-permission.png") });
-    await dialog.getByRole("button", { name: "完成", exact: true }).click();
-    await closeFiles(page);
-    await openWorkspaceTab(page);
-    await page.getByRole("button", { name: `管理工作区 ${f.a.workspace.name}`, exact: true }).click();
-    await checkTarget(page, f.a.workspace.name);
-    await expect(page.getByRole("dialog", { name: "工作区权限" }).getByLabel("允许 Bot 新建 Markdown/CSV", { exact: true })).not.toBeChecked();
-    expect(errors).toEqual([]);
-  } finally {
-    if (application) await close(application);
-    removeTestDirectory(f.data);
-  }
-});
-
-test("UX-01 unbound chat names the missing scope and opens the existing binding detail without silently granting a folder", async () => {
-  const f = await fixture();
-  let application: ElectronApplication | undefined;
-  try {
-    const launched = await launch(f.data);
-    application = launched.application;
-    const page = launched.page;
-    await page.locator(`.bot-row[aria-label="未绑定助手"]`).click();
-    await expect(page.getByRole("heading", { name: "未绑定助手", exact: true })).toBeVisible();
-    await openConversationFiles(page);
-    await page.locator(".task-details-shelf").getByRole("button", { name: "管理文件夹", exact: true }).click();
-    const manager = page.getByRole("dialog", { name: "工作区权限", exact: true });
-    await expect(manager).toContainText("当前聊天未关联工作区");
-    await expect(manager.getByLabel("当前聊天工作区", { exact: true })).toHaveValue("");
-    await manager.getByLabel("当前聊天工作区", { exact: true }).click({ trial: true });
-    expect(scope(f, f.unbound.session.id)).toEqual({ project: { project_id: null }, grants: [] });
-    await page.screenshot({ path: join(evidenceRoot, "aevoren-ux01-unbound-chat-settings.png") });
-    await manager.getByLabel("当前聊天工作区", { exact: true }).selectOption(f.b.project.id);
-    await expect.poll(() => scope(f, f.unbound.session.id).grants.map(row => row.workspace_id)).toEqual([f.b.workspace.id]);
-    await manager.getByRole("button", { name: "完成", exact: true }).click();
-    await openConversationFiles(page);
-    await page.locator(".task-details-shelf").getByRole("button", { name: "管理文件夹", exact: true }).click();
-    await checkTarget(page, f.b.workspace.name);
-  } finally {
-    if (application) await close(application);
-    removeTestDirectory(f.data);
-  }
-});
-
-test("UX-01 legacy multiple grants require an explicit allowed target and never borrow the last sidebar target", async () => {
-  const f = await fixture();
-  const initial = scope(f, f.legacy.session.id);
-  let application: ElectronApplication | undefined;
-  try {
-    const launched = await launch(f.data);
-    application = launched.application;
-    const page = launched.page;
-    await page.locator(`.bot-row[aria-label="历史多授权助手"]`).click();
-    await openConversationFiles(page);
-    const shelf = page.locator(".task-details-shelf");
-    await shelf.getByRole("button", { name: "管理文件夹", exact: true }).click();
-    const manager = page.getByRole("dialog", { name: "工作区权限", exact: true });
-    const target = manager.getByLabel("选择要管理的工作区", { exact: true });
-    await expect(target).toBeVisible();
-    await expect(target).toHaveValue("");
-    await expect(manager.locator(".workspace-row")).toHaveCount(0);
-    const allowed = await target.locator("option").evaluateAll(options => options.map(option => ({ value: (option as HTMLOptionElement).value, disabled: (option as HTMLOptionElement).disabled })).filter(option => option.value));
-    expect(allowed.map(option => option.value).sort()).toEqual([f.a.workspace.id, f.b.workspace.id].sort());
-    await target.selectOption(f.a.workspace.id);
-    await checkTarget(page, f.a.workspace.name);
-    await target.selectOption(f.b.workspace.id);
-    await checkTarget(page, f.b.workspace.name);
-    expect(scope(f, f.legacy.session.id)).toEqual(initial);
-    await page.screenshot({ path: join(evidenceRoot, "aevoren-ux01-legacy-selected-b.png") });
-  } finally {
-    if (application) await close(application);
-    removeTestDirectory(f.data);
-  }
-});
 
 async function configureCodex(page: Page, botIds: string[]): Promise<void> {
   await page.evaluate(async ids => {
@@ -308,64 +173,6 @@ test("UX-02 renders a new isolated copy of genuine failed/completed audit attemp
     source.close();
     if (application) await close(application);
     removeTestDirectory(data);
-  }
-});
-
-test("UX-02 real Codex read-only failure then corrected permission retries the same task and saves a verified file", async () => {
-  test.skip(process.env.AEVOREN_BOT_REAL_UX_CLI !== "1", "requires explicit local real CLI verification; business execution remains unverified");
-  test.setTimeout(420_000);
-  const f = await fixture();
-  const instructions = new AppRepository(f.path);
-  const current = instructions.getBot(f.bound.bot.id);
-  instructions.updateBot(current.id, current.version, { instructions: "只通过真实工作区工具处理用户文件任务。必须读取指定来源；即便写入未获授权，也应实际读取后明确说明缺失权限。没有成功写入和回读工具记录，不得声称已保存。写入权限开放后完成用户原任务，只新建指定的一份文件，不创建副本、不覆盖、不联网。" });
-  instructions.close();
-  let application: ElectronApplication | undefined;
-  try {
-    const launched = await launch(f.data);
-    application = launched.application;
-    const page = launched.page;
-    await configureCodex(page, [f.bound.bot.id]);
-    await page.getByLabel("消息", { exact: true }).fill("请实际读取当前工作区的产品说明.md，提炼三项核心能力，并新建权限修正结果.md，最后真实回读这份文件核对保存成功。即便写入暂时不可用，也必须先完成真实读取，明确说明为什么尚未保存；不要虚构执行，不要覆盖文件，不联网。修复授权后重试必须继续同一任务，只生成这一个文件。");
-    await page.getByRole("button", { name: "发送", exact: true }).click();
-    const first = await waitDirect(page, f.bound.session.id);
-    if (!first.snapshot.ok || !first.tools.ok) throw new Error("Missing real initial evidence");
-    const failed = first.snapshot.data.runs.at(-1)!;
-    expect(failed).toMatchObject({ route: "codex-cli", state: "failed", lastErrorCode: "TASK_REQUIREMENTS_UNMET" });
-    expect(first.tools.data.some(tool => tool.runtimeRunId === failed.id && tool.toolKind === "workspace-read" && tool.state === "succeeded")).toBe(true);
-    expect(existsSync(join(f.bRoot, "权限修正结果.md"))).toBe(false);
-    await expect(page.getByRole("button", { name: "重试此步骤", exact: true })).toBeVisible();
-    await openConversationFiles(page);
-    await page.locator(".task-details-shelf").getByRole("button", { name: "管理文件夹", exact: true }).click();
-    await checkTarget(page, f.b.workspace.name);
-    await page.getByRole("dialog", { name: "工作区权限" }).getByLabel("允许 Bot 新建 Markdown/CSV", { exact: true }).check();
-    await page.getByRole("dialog", { name: "工作区权限" }).getByRole("button", { name: "完成", exact: true }).click();
-    await page.getByRole("button", { name: "重试此步骤", exact: true }).click();
-    await expect(page.locator(".run-status-card.status-error:visible")).toHaveCount(0);
-    await expect.poll(async () => {
-      const state = await directState(page, f.bound.session.id);
-      return state.snapshot.ok ? state.snapshot.data.runs.at(-1)?.attemptNo : null;
-    }, { timeout: 10_000 }).toBe(2);
-    const final = await waitDirect(page, f.bound.session.id);
-    if (!final.snapshot.ok || !final.tools.ok) throw new Error("Missing real retried evidence");
-    const completed = final.snapshot.data.runs.at(-1)!;
-    expect(completed).toMatchObject({ executionKey: failed.executionKey, attemptNo: 2, route: "codex-cli", state: "completed" });
-    const writes = final.tools.data.filter(tool => tool.runtimeRunId === completed.id && tool.toolKind === "workspace-write" && tool.state === "succeeded");
-    expect(writes).toHaveLength(1);
-    expect(writes[0]!.targetPath).toBe("权限修正结果.md");
-    const bytes = readFileSync(join(f.bRoot, "权限修正结果.md"));
-    expect(writes[0]!.resultMetadata).toMatchObject({ bytes: bytes.byteLength, sha256: createHash("sha256").update(bytes).digest("hex"), created: true });
-    expect(final.tools.data.some(tool => tool.runtimeRunId === completed.id && tool.toolKind === "workspace-read" && tool.targetPath === "权限修正结果.md" && tool.state === "succeeded")).toBe(true);
-    await expect(page.locator(".run-status-card.status-error:visible")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "重试此步骤", exact: true })).toHaveCount(0);
-    await expect(page.locator(".composer-error:visible")).toHaveCount(0);
-    await expect(page.getByTestId("direct-attempt-history")).toHaveCount(1);
-    await page.screenshot({ path: join(evidenceRoot, "aevoren-ux02-real-retry-saved.png") });
-    await openConversationFiles(page);
-    await expect(page.locator(".task-details-shelf")).toContainText("权限修正结果.md");
-    await test.info().attach("real-cli-retry-evidence", { body: Buffer.from(JSON.stringify({ first, final }, null, 2)), contentType: "application/json" });
-  } finally {
-    if (application) await close(application);
-    removeTestDirectory(f.data);
   }
 });
 

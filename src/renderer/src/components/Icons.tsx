@@ -25,7 +25,6 @@ export {
   Trash as TrashIcon,
   ChatCircle as ChatIcon,
   Users as ContactsIcon,
-  Cube as WorkspaceIcon,
   MagnifyingGlass as SearchIcon,
   DotsThree as MoreIcon,
   At as AtIcon,

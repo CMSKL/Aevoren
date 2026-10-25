@@ -8,7 +8,7 @@ import { copyRealApiProfile } from "./real-api-profile";
 import { removeTestDirectory } from "./test-cleanup";
 
 for (const driver of ["api", "codex", "claude"] as const) {
-  test(`real ${driver} uses product discovery, settings and team creation with actual receipts`, async () => {
+  test(`real ${driver} uses product discovery and settings with actual receipts`, async () => {
     test.skip(process.env.AEVOREN_REAL_PRODUCT_TOOLS !== "1", "explicit real model validation only");
     test.setTimeout(300_000);
     const data = mkdtempSync(join(tmpdir(), `aevoren-product-real-${driver}-`));
@@ -18,7 +18,7 @@ for (const driver of ["api", "codex", "claude"] as const) {
     const repository = new AppRepository(join(data, "aevoren-bot.sqlite"));
     const created = repository.createBot();
     const name = `能力验收 ${driver}`;
-    repository.updateBot(created.bot.id, created.bot.version, { name, mcpServerIds: [], instructions: "执行当前用户明确指定的产品配置或委派验收。配置验收先用 product_catalog 查功能，再用 product_describe 查 settings.saveGeneral 与 teams.createContentTeam 的输入，然后用 product_execute 执行。这两个功能都必须用新版产品入口，不使用旧 bot_create/room_create。查询真实结果再回复；目录或参数说明不能算执行完成。禁止联网、文件或其他设置变更，只有用户明确指定委派时才发消息。" });
+    repository.updateBot(created.bot.id, created.bot.version, { name, mcpServerIds: [], instructions: "执行当前用户明确指定的产品配置或委派验收。配置验收先用 product_catalog 查功能，再用 product_describe 查 settings.saveGeneral 的输入，然后用 product_execute 执行。这个功能必须用新版产品入口，不使用旧 bot_create/room_create。查询真实结果再回复；目录或参数说明不能算执行完成。禁止联网、文件或其他设置变更，只有用户明确指定委派时才发消息。" });
     repository.setSetting("appearance.theme", "light", false);
     repository.setSetting("memory.capture.enabled", "false", false);
     repository.close();
@@ -47,7 +47,7 @@ for (const driver of ["api", "codex", "claude"] as const) {
         return selected.data.modelSelection;
       }, { id: created.bot.id, instanceId, apiModel });
       await page.reload();
-      await page.getByLabel("消息", { exact: true }).fill("请先查询产品功能目录和具体参数，再把本应用主题改成暗黑，使用现有的一键内容团队模板创建自媒体团队。只配置，不发群消息，不启动新建 Bot，不访问文件，不联网。必须用 product_execute 的 settings.saveGeneral 和 teams.createContentTeam，完成后据真实回执简短回复。");
+      await page.getByLabel("消息", { exact: true }).fill("请先查询产品功能目录和具体参数，再把本应用主题改成暗黑。只配置，不创建资源，不发群消息，不访问文件，不联网。必须用 product_execute 的 settings.saveGeneral，完成后据真实回执简短回复。");
       await page.getByRole("button", { name: "发送", exact: true }).click();
       const deadline = Date.now() + 240_000;
       let completed = false;
@@ -59,7 +59,7 @@ for (const driver of ["api", "codex", "claude"] as const) {
         if (state.approvals.ok && state.tools.ok) for (const approval of state.approvals.data) {
           const invocation = state.tools.data.find((item) => item.id === approval.toolInvocationId);
           const command = invocation?.arguments;
-          if (command?.kind !== "product-call" || command.action !== "execute" || !["settings.saveGeneral", "teams.createContentTeam"].includes(command.operation)) throw new Error("Unexpected write proposed during real validation");
+          if (command?.kind !== "product-call" || command.action !== "execute" || command.operation !== "settings.saveGeneral") throw new Error("Unexpected write proposed during real validation");
           const resolved = await page.evaluate(async (input) => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.approvals.resolve(input), { sessionId: created.session.id, id: approval.id, expectedVersion: approval.version, resolution: "allow-once" as const });
           expect(resolved.ok).toBe(true);
         }
@@ -73,12 +73,12 @@ for (const driver of ["api", "codex", "claude"] as const) {
         return { settings: await api.settings.getGeneral(), bots: await api.bots.list(), rooms: await api.rooms.list(), tools: await api.tools.list({ sessionId }), snapshot: await api.runtime.getSessionSnapshot(sessionId) };
       }, created.session.id);
       if (!result.settings.ok || !result.bots.ok || !result.rooms.ok || !result.tools.ok || !result.snapshot.ok) throw new Error("Actual result missing");
-      expect(result.settings.data.theme).toBe("dark"); expect(result.bots.data).toHaveLength(6); expect(result.rooms.data).toHaveLength(1);
+      expect(result.settings.data.theme).toBe("dark"); expect(result.bots.data).toHaveLength(1); expect(result.rooms.data).toHaveLength(0);
       expect(result.bots.data.every((bot) => bot.modelSelection.providerInstanceId === instanceId)).toBe(true);
       const tools = result.tools.data.filter((tool) => tool.state === "succeeded");
       expect(tools.some((tool) => tool.arguments.kind === "product-call" && tool.arguments.action === "catalog")).toBe(true);
       expect(tools.some((tool) => tool.arguments.kind === "product-call" && tool.arguments.action === "describe")).toBe(true);
-      for (const operation of ["settings.saveGeneral", "teams.createContentTeam"]) expect(tools.some((tool) => tool.arguments.kind === "product-call" && tool.arguments.action === "execute" && tool.arguments.operation === operation && tool.resultDigest)).toBe(true);
+      expect(tools.some((tool) => tool.arguments.kind === "product-call" && tool.arguments.action === "execute" && tool.arguments.operation === "settings.saveGeneral" && tool.resultDigest)).toBe(true);
       await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
       const recipient = await page.evaluate(async (selection) => {
         const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;

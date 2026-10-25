@@ -189,10 +189,13 @@ it.each([
       "web_fetch"
     ]
   }
-])("extracts only actionable requirements: $request", async ({ request, mustInclude, mustExclude }) => {
+])("extracts actionable supported requirements and excludes retired directory tools: $request", async ({ request, mustInclude, mustExclude }) => {
   for (const purpose of [undefined, "work"] as const) {
     const actual = await contextFor(request, purpose, purpose === "work");
-    for (const name of mustInclude ?? []) expect(actual?.requiredToolNames).toContain(name);
+    for (const name of mustInclude ?? []) {
+      if (name.startsWith("workspace_")) expect(actual?.requiredToolNames).not.toContain(name);
+      else expect(actual?.requiredToolNames).toContain(name);
+    }
     for (const name of mustExclude ?? []) expect(actual?.requiredToolNames).not.toContain(name);
   }
 });

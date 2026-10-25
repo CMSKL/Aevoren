@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "license": "Apache-2.0",
   "private": true,
-  "description": "Aevoren is a reliable local desktop workspace for persistent AI bots.",
+  "description": "Aevoren is a reliable local desktop app for persistent AI bots.",
   "author": "Aevoren contributors",
   "homepage": "https://github.com/CMSKL/Aevoren#readme",
   "bugs": {

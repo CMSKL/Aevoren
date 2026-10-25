@@ -11,7 +11,7 @@ type CapabilitiesSettingsPanelProps = {
 const categoryLabels: Record<CapabilitySnapshot["capabilities"][number]["category"], string> = {
   conversation: "对话与协作",
   memory: "记忆",
-  workspace: "本地数据",
+  workspace: "资料与执行",
   network: "联网与实时数据",
   device: "设备与系统",
   automation: "主动服务",
@@ -28,10 +28,6 @@ const availabilityLabels: Record<CapabilityAvailability, string> = {
 
 const toolLabels: Record<string, string> = {
   product_catalog: "产品功能目录", product_describe: "产品操作说明", product_execute: "产品功能执行",
-  workspace_list: "查看已授权文件夹",
-  workspace_read: "读取已授权文件夹文件",
-  workspace_search: "搜索已授权文件夹文件",
-  workspace_write: "在授权文件夹中新建文件",
   web_search: "联网搜索",
   web_fetch: "读取公开网页",
   weather_current: "查询天气",
@@ -69,7 +65,7 @@ export function CapabilitiesSettingsPanel({ active, botId, onOpenModels }: Capab
   const groups = useMemo(() => {
     if (!snapshot) return [];
     return Object.entries(categoryLabels).flatMap(([category, label]) => {
-      const items = snapshot.capabilities.filter((capability) => capability.category === category);
+      const items = snapshot.capabilities.filter((capability) => capability.category === category && !capability.id.startsWith("workspace."));
       return items.length > 0 ? [{ category, label, items }] : [];
     });
   }, [snapshot]);
@@ -102,14 +98,14 @@ export function CapabilitiesSettingsPanel({ active, botId, onOpenModels }: Capab
             <span className="settings-value">{new Date(snapshot.generatedAt).toLocaleString("zh-CN")}</span>
           </div>
           <div className="settings-row">
-            <span><strong>当前可调用工具</strong><small>{snapshot.workspaceCount} 个文件夹 · {snapshot.connections.filter((item) => item.status === "available").length}/{snapshot.connections.length} 个模型来源可用</small></span>
-            <span className="settings-value">{snapshot.availableTools.length > 0 ? snapshot.availableTools.map((tool) => toolLabels[tool] ?? "外部工具").join("、") : "无"}</span>
+            <span><strong>当前可调用工具</strong><small>{snapshot.connections.filter((item) => item.status === "available").length}/{snapshot.connections.length} 个模型来源可用</small></span>
+            <span className="settings-value">{snapshot.availableTools.length > 0 ? snapshot.availableTools.filter(tool => !tool.startsWith("workspace_")).map((tool) => toolLabels[tool] ?? "外部工具").join("、") : "无"}</span>
           </div>
         </div>
 
         <h3 className="capability-section-title">权限</h3>
         <div className="settings-card settings-form-group">
-          {snapshot.permissions.map((permission) => (
+          {snapshot.permissions.filter(permission => !permission.id.startsWith("workspace.")).map((permission) => (
             <div className="settings-row" key={permission.id}>
               <span><strong>{permission.name}</strong><small>{permission.scopeSummary} · {permission.revocable ? "可撤销" : "不可撤销"}</small></span>
               <span className={`capability-state capability-state-${permission.state}`}>{permission.state === "granted" ? <CheckIcon /> : null}{permission.state === "granted" ? "已授权" : permission.state === "not-granted" ? "未授权" : "不支持"}</span>

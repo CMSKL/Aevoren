@@ -7,7 +7,7 @@ import { _electron as electron, expect, test, type ElectronApplication, type Pag
 import { BOT_AVATAR_COLORS, type BotAvatarColor } from "../../src/shared/bot-avatar";
 import type { AevorenBotApi } from "../../src/shared/contracts";
 import { removeTestDirectory } from "./test-cleanup";
-import { openSettingsFromAccount, openInspector, openWorkspaceTab, selectNavigationTab, openListFilter } from "./navigation";
+import { openSettingsFromAccount, openInspector, openContactsTab, selectNavigationTab, openListFilter } from "./navigation";
 
 // Browser plugin not available. Use the repository's Playwright/Electron workflow.
 // The fake provider isolates UI fixtures; these tests make no model-response claims.
@@ -442,7 +442,7 @@ for (const theme of ["light", "dark"] as const) {
             }
           });
         }
-        await test.step("verify closing settings, contact search, and workspace/chat navigation", async () => {
+        await test.step("verify closing settings, contact search, and chat navigation", async () => {
           await dialog.getByRole("button", { name: "关闭设置", exact: true }).click();
           await expect(dialog).toBeHidden();
           await checkHorizontalLayout(page);
@@ -456,8 +456,8 @@ for (const theme of ["light", "dark"] as const) {
           await page.getByLabel("搜索联系人", { exact: true }).fill("界面验收");
           await expect(page.locator(".sidebar .bot-row")).toHaveCount(1);
           await openSidebar(page);
-          await openWorkspaceTab(page);
-          await expect(page.locator(".sidebar-project").first()).toBeVisible();
+          await openContactsTab(page);
+          await expect(page.locator(".sidebar-project")).toHaveCount(0);
           await openSidebar(page);
           await selectNavigationTab(page, "聊天");
           await openSidebar(page);

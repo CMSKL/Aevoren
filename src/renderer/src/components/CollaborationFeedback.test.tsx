@@ -6,7 +6,7 @@ import { ArtifactStatusBar, RunFailureCard } from "./CollaborationFeedback";
 describe("ArtifactStatusBar", () => {
   it("does not render a per-reply Markdown export control when there is no saved artifact", () => {
     const html = renderToStaticMarkup(
-      <ArtifactStatusBar writes={[]} onRevealWorkspace={() => undefined} onOpenWorkspaces={() => undefined} />,
+      <ArtifactStatusBar writes={[]} />,
     );
 
     expect(html).toBe("");

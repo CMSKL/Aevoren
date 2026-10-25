@@ -1,14 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
-import type { AppError, MemoryItem, MemoryKind, MemoryProposal, MemoryScopeSelector, Workspace } from "@shared/contracts";
+import { useEffect, useState } from "react";
+import type { AppError, MemoryItem, MemoryKind, MemoryProposal, MemoryScopeSelector } from "@shared/contracts";
 import { CheckIcon, TrashIcon } from "./Icons";
+
+const selector: MemoryScopeSelector = { scope: "user", scopeKey: "user" };
 
 type ScopedMemorySettingsPanelProps = {
   active: boolean;
 };
 
 export function ScopedMemorySettingsPanel({ active }: ScopedMemorySettingsPanelProps): React.JSX.Element {
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [selectedScope, setSelectedScope] = useState("user");
   const [items, setItems] = useState<MemoryItem[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [kinds, setKinds] = useState<Record<string, MemoryKind>>({});
@@ -22,29 +22,22 @@ export function ScopedMemorySettingsPanel({ active }: ScopedMemorySettingsPanelP
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<AppError | null>(null);
 
-  const selector = useMemo<MemoryScopeSelector>(() => selectedScope === "user"
-    ? { scope: "user", scopeKey: "user" }
-    : { scope: "workspace", scopeKey: selectedScope }, [selectedScope]);
-
   useEffect(() => {
     if (!active) return;
     let cancelled = false;
     void Promise.all([
-      window.aevorenBot.workspaces.list(),
       window.aevorenBot.memories.list({ ...selector, includeDeleted: true }),
       window.aevorenBot.memories.listProposals({ state: "pending" }),
       window.aevorenBot.settings.getGeneral(),
-    ]).then(([workspaceResult, memoryResult, proposalResult, settingsResult]) => {
+    ]).then(([memoryResult, proposalResult, settingsResult]) => {
       if (cancelled) return;
-      if (workspaceResult.ok) setWorkspaces(workspaceResult.data);
-      else setError(workspaceResult.error);
       if (memoryResult.ok) {
         setItems(memoryResult.data);
         setDrafts(Object.fromEntries(memoryResult.data.map((item) => [item.id, item.content])));
         setKinds(Object.fromEntries(memoryResult.data.map((item) => [item.id, item.kind])));
       } else setError(memoryResult.error);
       if (proposalResult.ok) {
-        setProposals(proposalResult.data);
+        setProposals(proposalResult.data.filter(proposal => proposal.scope !== "workspace"));
         setProposalDrafts(Object.fromEntries(proposalResult.data.map((item) => [item.id, item.content])));
         setProposalKinds(Object.fromEntries(proposalResult.data.map((item) => [item.id, item.kind])));
       } else setError(proposalResult.error);
@@ -52,7 +45,7 @@ export function ScopedMemorySettingsPanel({ active }: ScopedMemorySettingsPanelP
       else setError(settingsResult.error);
     });
     return () => { cancelled = true; };
-  }, [active, selector]);
+  }, [active]);
 
   const create = async (): Promise<void> => {
     const content = newDraft.trim();
@@ -166,7 +159,7 @@ export function ScopedMemorySettingsPanel({ active }: ScopedMemorySettingsPanelP
         </div>
         {proposals.map((proposal) => <article className="settings-card memory-proposal settings-list-row" key={proposal.id}>
           <div className="memory-proposal-meta">
-            <span>{proposal.scope === "user" ? "全部 Bot" : proposal.scope === "workspace" ? "Workspace" : "Bot 专属"}</span>
+            <span>{proposal.scope === "user" ? "全部 Bot" : "Bot 专属"}</span>
             <span>{proposal.reason}</span>
           </div>
           <div className="memory-proposal-editor">
@@ -182,19 +175,13 @@ export function ScopedMemorySettingsPanel({ active }: ScopedMemorySettingsPanelP
           </footer>
         </article>)}
       </section> : null}
-      <label className="settings-field-row settings-card settings-form-group memory-scope-picker">
-        <span><strong>记忆范围</strong><small>切换范围不会复制或合并现有记忆</small></span>
-        <select aria-label="Memory 范围" value={selectedScope} onChange={(event) => setSelectedScope(event.target.value)}>
-          <option value="user">用户偏好（全部 Bot）</option>
-          {workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>Workspace · {workspace.name}</option>)}
-        </select>
-      </label>
+      <p className="settings-security-note">这里管理全部 Bot 使用的用户偏好；Bot 专属记忆在对应联系人资料中管理。</p>
 
       <div className="settings-card settings-form-group scoped-memory-create">
         <select aria-label="新增 Memory 类型" value={newKind} onChange={(event) => setNewKind(event.target.value as MemoryKind)}>
           <MemoryKindOptions />
         </select>
-        <textarea aria-label="新增范围 Memory" value={newDraft} maxLength={4_000} rows={3} placeholder="记录稳定偏好、约束或项目长期状态" onChange={(event) => setNewDraft(event.target.value)} />
+        <textarea aria-label="新增范围 Memory" value={newDraft} maxLength={4_000} rows={3} placeholder="记录稳定偏好或长期约束" onChange={(event) => setNewDraft(event.target.value)} />
         <button className="primary-button" type="button" disabled={busy !== null || !newDraft.trim()} onClick={() => void create()}>{busy === "create" ? "添加中…" : "添加 Memory"}</button>
       </div>
 

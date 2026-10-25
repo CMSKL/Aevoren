@@ -6,7 +6,6 @@ import { addNativeOutboundProductHandlers } from "./native-outbound-product-hand
 import type { NativeOutboundService } from "./native-outbound-service";
 import { clipboard } from "electron";
 import { IPC } from "@shared/channels";
-import { DEFAULT_PROJECT_ID } from "@shared/contracts";
 import {
   approvalResolutionSchema,
   artifactSaveSchema,
@@ -18,13 +17,13 @@ import {
   botIdSchema,
   botPinnedSchema,
   botUnreadSchema,
+  botCreateSchema,
   botUpdateSchema,
   capabilitySnapshotInputSchema,
   conversationBatchDeleteSchema,
   conversationPinnedSchema,
   conversationUnreadSchema,
   conversationHiddenSchema,
-  conversationProjectSchema,
   generalSettingsSchema,
   memoryCreateSchema,
   memoryListSchema,
@@ -55,16 +54,11 @@ import {
   runIdSchema,
   sendCommandSchema,
   providerInstanceIdInputSchema,
-  projectContextSchema,
-  projectCreateSchema,
   saveCliProviderSchema,
   saveOpenAiCompatibleProviderSchema,
   sessionIdSchema,
   toolSessionScopeSchema,
   turnIdSchema,
-  workspaceMutationSchema,
-  workspacePermissionsSchema,
-  workspaceRevealSchema,
 } from "@shared/schemas";
 import { AevorenBotError } from "./errors";
 import type { AppRepository } from "./database";
@@ -110,24 +104,22 @@ export type ProductDependencies = ApplicationDependencies & ComputerTaskDependen
   mcpService: McpService;
   routineService: RoutineService;
   updateService: UpdateService;
-  pickWorkspaceRoot(): Promise<string | null>;
   pickAttachments(): Promise<import("@shared/contracts").AttachmentDraft[]>;
   saveArtifact(input: import("@shared/contracts").ArtifactSaveInput): Promise<import("@shared/contracts").ArtifactSaveResult | null>;
   revealArtifact(path: string): boolean;
-  revealWorkspaceTarget(input: { workspaceId: string; path: string }): Promise<boolean>;
   forceFakeProvider: boolean;
   prepareUpdateInstall(): void;
   cancelUpdateInstall(): void;
 };
 
 export function createProductHandlers(dependencies: ProductDependencies, commit: <T>(operation: () => T) => T = (operation) => operation(), memorySourceEntryId?: string, libraryContext?: LibraryExecutionContext): Map<string, (input?: unknown) => unknown> {
-  const { repository, providers, generalSettings, sendWorker, roomCoordinator, workspaceService, workspaceToolCoordinator } = dependencies;
+  const { repository, providers, generalSettings, sendWorker, roomCoordinator, workspaceToolCoordinator } = dependencies;
   const userProfile = new UserProfileService(repository);
-  const creationProject = (requested?: string): string | undefined => {
-    if (!libraryContext) return requested;
-    const projectId = repository.getSessionProjectId(libraryContext.sessionId);
-    if (requested && requested !== (projectId ?? DEFAULT_PROJECT_ID)) throw new AevorenBotError("PROJECT_TOOL_SCOPE_INVALID");
-    return projectId ?? undefined;
+  const creationProject = (): string | undefined => libraryContext
+    ? repository.getSessionProjectId(libraryContext.sessionId) ?? undefined
+    : undefined;
+  const assertCurrentMemory = (id: string): void => {
+    if (repository.getMemory(id).scope === "workspace") throw new AevorenBotError("INVALID_REQUEST");
   };
 
   const roomLead = async (memberBotIds: string[], requested: string | null | undefined): Promise<string | null> => {
@@ -247,10 +239,6 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
     return commit(() => repository.setConversationHidden(parsed.sessionId, parsed.hidden));
   });
   handle(IPC.conversationsClear, (sessionId: unknown) => commit(() => repository.clearConversation(sessionIdSchema.parse(sessionId))));
-  handle(IPC.conversationsSetProject, (input: unknown) => {
-    const parsed = conversationProjectSchema.parse(input);
-    return commit(() => repository.setConversationProject(parsed.sessionId, parsed.projectId, parsed.expectedVersion));
-  });
   handle(IPC.conversationsDeleteBatch, (input: unknown) => {
     const parsed = conversationBatchDeleteSchema.parse(input);
     const remove = () => commit(() => repository.deleteConversations(parsed));
@@ -258,15 +246,13 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
       parsed.roomIds.map(id => repository.getRoomMainSession(id).id), parsed.botIds,
       () => repository.assertConversationsDeletable(parsed), remove) : remove();
   });
-  handle(IPC.teamsCreateContentTeam, (input: unknown) => {
-    const parsed = projectContextSchema.parse(input ?? {});
-    return commit(() => repository.createContentTeamTemplate(creationProject(parsed.projectId), !libraryContext));
-  });
-  handle(IPC.projectsCreate, (input: unknown) => commit(() => repository.createProject(projectCreateSchema.parse(input).name)));
   handle(IPC.roomsGetBriefApproval, (input: unknown) => roomCoordinator.getBriefApproval(briefApprovalReadSchema.parse(input)));
   handle(IPC.roomsApproveBrief, (input: unknown) => roomCoordinator.approveBrief(briefApprovalCommandSchema.parse(input)));
   handle(IPC.botsList, () => repository.listBots());
-  handle(IPC.botsCreate, (input: unknown) => commit(() => repository.createBot(creationProject(projectContextSchema.parse(input ?? {}).projectId), !libraryContext)));
+  handle(IPC.botsCreate, (input: unknown) => {
+    botCreateSchema.parse(input ?? {});
+    return commit(() => repository.createBot(creationProject(), false));
+  });
   handle(IPC.botsUpdate, (input: unknown) => {
     const parsed = botUpdateSchema.parse(input);
     if (parsed.patch.modelSelection && !providers.isSupported(parsed.patch.modelSelection.providerInstanceId)) {
@@ -314,6 +300,7 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
   });
   handle(IPC.memoriesUpdate, (input: unknown) => {
     const parsed = memoryUpdateSchema.parse(input);
+    assertCurrentMemory(parsed.id);
     return commit(() => repository.updateMemory(parsed.id, parsed.expectedVersion, parsed.content, {
       kind: parsed.kind,
       expiresAt: parsed.expiresAt,
@@ -321,18 +308,21 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
   });
   handle(IPC.memoriesDelete, (input: unknown) => {
     const parsed = memoryMutationSchema.parse(input);
+    assertCurrentMemory(parsed.id);
     return commit(() => repository.deleteMemory(parsed.id, parsed.expectedVersion));
   });
   handle(IPC.memoriesRestore, (input: unknown) => {
     const parsed = memoryMutationSchema.parse(input);
+    assertCurrentMemory(parsed.id);
     return commit(() => repository.restoreMemory(parsed.id, parsed.expectedVersion));
   });
   handle(IPC.memoriesListProposals, (input: unknown) => {
     const parsed = memoryProposalListSchema.parse(input) ?? {};
-    return repository.listMemoryProposals(parsed);
+    return repository.listMemoryProposals(parsed).filter(proposal => proposal.scope !== "workspace");
   });
   handle(IPC.memoriesAcceptProposal, (input: unknown) => {
     const parsed = memoryProposalAcceptSchema.parse(input);
+    if (repository.getMemoryProposal(parsed.id).scope === "workspace") throw new AevorenBotError("INVALID_REQUEST");
     return commit(() => repository.acceptMemoryProposal(parsed.id, parsed.expectedVersion, {
       content: parsed.content,
       kind: parsed.kind,
@@ -341,42 +331,30 @@ export function createProductHandlers(dependencies: ProductDependencies, commit:
   });
   handle(IPC.memoriesRejectProposal, (input: unknown) => {
     const parsed = memoryMutationSchema.parse(input);
+    if (repository.getMemoryProposal(parsed.id).scope === "workspace") throw new AevorenBotError("INVALID_REQUEST");
     return commit(() => repository.rejectMemoryProposal(parsed.id, parsed.expectedVersion));
   });
-  handle(IPC.workspacesList, () => repository.listWorkspaces());
-  handle(IPC.workspacesAdd, async (input: unknown) => {
-    const parsed = projectContextSchema.parse(input ?? {});
-    const rootPath = await dependencies.pickWorkspaceRoot();
-    return rootPath ? workspaceService.registerRoot(rootPath, parsed.projectId) : null;
-  });
-  handle(IPC.workspacesUpdatePermissions, (input: unknown) => {
-    const parsed = workspacePermissionsSchema.parse(input);
-    return commit(() => repository.updateWorkspacePermissions(parsed.id, parsed.expectedVersion, parsed));
-  });
-  handle(IPC.workspacesReveal, (input: unknown) => dependencies.revealWorkspaceTarget(workspaceRevealSchema.parse(input)));
-  handle(IPC.workspacesRemove, (input: unknown) => {
-    const parsed = workspaceMutationSchema.parse(input);
-    return commit(() => repository.removeWorkspace(parsed.id, parsed.expectedVersion));
-  });
-  handle(IPC.projectsList, () => repository.listProjects());
   handle(IPC.toolsList, (input: unknown) => {
     const parsed = toolSessionScopeSchema.parse(input);
     return repository.listToolInvocations(parsed.sessionId);
   });
   handle(IPC.approvalsListPending, (input: unknown) => {
     const parsed = toolSessionScopeSchema.parse(input);
-    return repository.listPendingApprovalRequests(parsed.sessionId);
+    return repository.listPendingApprovalRequests(parsed.sessionId).filter(approval =>
+      !repository.getToolInvocation(approval.toolInvocationId).toolKind.startsWith("workspace-"));
   });
   handle(IPC.approvalsResolve, async (input: unknown) => {
     const parsed = approvalResolutionSchema.parse(input);
+    const approval = repository.getApprovalRequest(parsed.id);
+    if (repository.getToolInvocation(approval.toolInvocationId).toolKind.startsWith("workspace-")) throw new AevorenBotError("LOCAL_DIRECTORY_ACCESS_REMOVED");
     return workspaceToolCoordinator.resolve(parsed.sessionId, parsed.id, parsed.expectedVersion, parsed.resolution);
   });
   handle(IPC.roomsList, (input: unknown) => repository.listRooms(roomListSchema.parse(input)?.includeArchived ?? false));
   handle(IPC.roomsCreate, async (input: unknown) => {
     const parsed = roomCreateSchema.parse(input);
-    const projectId = creationProject(parsed.projectId);
+    const projectId = creationProject();
     const leadBotId = await roomLead(parsed.memberBotIds, parsed.leadBotId);
-    return commit(() => repository.createRoom({ ...parsed, projectId, leadBotId }, !libraryContext));
+    return commit(() => repository.createRoom({ ...parsed, projectId, leadBotId }, false));
   });
   handle(IPC.roomsGet, (id: unknown) => repository.getRoomDetail(roomIdSchema.parse(id)));
   handle(IPC.roomsUpdate, async (input: unknown) => {

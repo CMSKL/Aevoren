@@ -11,13 +11,12 @@ import { PRODUCT_VIEW_DOM_EVENT } from "../../src/shared/product-view";
 import { MEDIA_CHANNELS } from "../../src/shared/media-channels";
 import { IPC } from "../../src/shared/channels";
 import { AppRepository } from "../../src/main/database";
-import { WorkspaceService } from "../../src/main/workspace-service";
 import { tinyDocx, tinyPdf } from "../fixtures/media-parser-data";
 import { disposeTestApplication, removeTestDirectory } from "./test-cleanup";
 import { openComposerTools, closeInspector, openInspector } from "./navigation";
 
-type Fixture = { application: ElectronApplication; page: Page; data: string; source: string; workspaceId: string; bots: { id: string; name: string; sessionId: string }[]; room: { id: string; sessionId: string; name: string }; imageSha256: string };
-type MainFixture = { mediaUiBarrier?: { entered: boolean; returned: boolean; release?: () => void }; mediaUiReads?: number };
+type Fixture = { application: ElectronApplication; page: Page; data: string; source: string; bots: { id: string; name: string; sessionId: string }[]; room: { id: string; sessionId: string; name: string }; imageSha256: string };
+type MainFixture = { mediaUiBarrier?: { entered: boolean; returned: boolean; release?: () => void }; mediaUiReads?: number; mediaPickerPaths?: string[]; mediaDialogWrapped?: boolean; mediaPickHandler?: (...args: unknown[]) => unknown };
 type Draft = { text: string; mediaRefs: MessageMediaReference[]; digest: string; draftVersion: number };
 type MediaMethod = Exclude<keyof MediaApi, "onChanged">;
 function value<T>(result: ApiResult<T>): T { if (!result.ok) throw new Error(result.error.code); return result.data; }
@@ -43,9 +42,8 @@ async function withMedia(work: (f: Fixture) => Promise<void>): Promise<void> {
   writeFileSync(join(source, "pages.pdf"), tinyPdf(["PDF_FIRST_UI", "", "PDF_LAST_UI"]));
   writeFileSync(join(source, "sections.docx"), await tinyDocx("DOCX_UI_SECTION\n<script>window.__media_test_script=1</script>"));
   const repository = new AppRepository(join(data, "aevoren-bot.sqlite"));
-  const registration = await new WorkspaceService(repository).registerRoot(source);
-  const bots = ["媒体甲", "媒体乙"].map(name => { const created = repository.createBot(registration.project.id); repository.updateBot(created.bot.id, created.bot.version, { name }); return { id: created.bot.id, sessionId: created.session.id, name }; });
-  const room = repository.createRoom({ name: "媒体隔离群", memberBotIds: bots.map(bot => bot.id), leadBotId: null, projectId: registration.project.id });
+  const bots = ["媒体甲", "媒体乙"].map(name => { const created = repository.createBot(); repository.updateBot(created.bot.id, created.bot.version, { name }); return { id: created.bot.id, sessionId: created.session.id, name }; });
+  const room = repository.createRoom({ name: "媒体隔离群", memberBotIds: bots.map(bot => bot.id), leadBotId: null });
   repository.setSetting("memory.capture.enabled", "false", false); repository.close();
   let application: ElectronApplication | undefined;
   try {
@@ -68,27 +66,53 @@ async function withMedia(work: (f: Fixture) => Promise<void>): Promise<void> {
       (globalThis as MainFixture).mediaUiReads = 0; ipcMain.removeHandler(channel);
       ipcMain.handle(channel, (...args) => { (globalThis as MainFixture).mediaUiReads! += 1; return original(...args); });
     }, MEDIA_CHANNELS.read);
-    const f: Fixture = { application, page, data, source, workspaceId: registration.workspace.id, bots, room: { id: room.room.id, sessionId: room.session.id, name: room.room.name }, imageSha256: createHash("sha256").update(image).digest("hex") };
+    const f: Fixture = { application, page, data, source, bots, room: { id: room.room.id, sessionId: room.session.id, name: room.room.name }, imageSha256: createHash("sha256").update(image).digest("hex") };
     await selectBot(f, 0); await work(f);
     expect(errors).toEqual([]); expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some(window => window.isVisible()))).toBe(false);
   } finally { if (application) await disposeTestApplication(application); removeTestDirectory(data); }
 }
 
-// Replace only the OS selection with a registered test Workspace path. Import parsing,
-// owned storage, authorization, IPC reply and returned reference all remain production code.
+// Replace only OS selection. The native import handler, parser, owned storage,
+// authorization, IPC reply and returned reference remain production code.
+async function chooseMediaPaths(f: Fixture, paths: string[]): Promise<void> {
+  await f.application.evaluate(({ dialog }, paths) => {
+    const globals = globalThis as MainFixture;
+    globals.mediaPickerPaths = paths;
+    if (globals.mediaDialogWrapped) return;
+    const original = dialog.showOpenDialog.bind(dialog);
+    Object.defineProperty(dialog, "showOpenDialog", { configurable: true, value: (...args: unknown[]) => {
+      const options = args.at(-1) as { title?: string } | undefined;
+      return options?.title === "导入图片、PDF 或 DOCX"
+        ? Promise.resolve({ canceled: false, filePaths: globals.mediaPickerPaths ?? [] })
+        : Reflect.apply(original, undefined, args);
+    } });
+    globals.mediaDialogWrapped = true;
+  }, paths);
+}
+async function importMedia(f: Fixture, paths: string[]): Promise<{ imported: MediaItem[] }> {
+  await chooseMediaPaths(f, paths);
+  const result = await call<{ imported: MediaItem[] } | null>(f.page, "pickImport", { sessionId: f.bots[0]!.sessionId });
+  if (!result) throw new Error("The explicit fixture media selection was cancelled");
+  return result;
+}
 async function picker(f: Fixture, hold = false): Promise<void> {
+  await chooseMediaPaths(f, [join(f.source, "picture.png")]);
   await f.application.evaluate(({ ipcMain }, input) => {
     const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, (...args: unknown[]) => unknown> })._invokeHandlers;
-    const original = handlers.get(input.importChannel); if (!original) throw new Error("Missing real media importer");
-    const globals = globalThis as MainFixture; globals.mediaUiBarrier = { entered: false, returned: false };
-    ipcMain.removeHandler(input.pickChannel);
-    ipcMain.handle(input.pickChannel, async (event, scope: { sessionId: string }) => {
-      const result = await original(event, { ...scope, workspaceId: input.workspaceId, path: "picture.png" });
+    const globals = globalThis as MainFixture;
+    globals.mediaPickHandler ??= handlers.get(input.channel);
+    const original = globals.mediaPickHandler;
+    if (!original) throw new Error("Missing real native media importer");
+    globals.mediaUiBarrier = { entered: false, returned: false };
+    ipcMain.removeHandler(input.channel);
+    ipcMain.handle(input.channel, async (...args: unknown[]) => {
+      const result = await original(...args);
       globals.mediaUiBarrier!.entered = true;
       if (input.hold) await new Promise<void>(resolve => { globals.mediaUiBarrier!.release = resolve; });
-      globals.mediaUiBarrier!.returned = true; return result;
+      globals.mediaUiBarrier!.returned = true;
+      return result;
     });
-  }, { pickChannel: MEDIA_CHANNELS.pickImport, importChannel: MEDIA_CHANNELS.importPath, workspaceId: f.workspaceId, hold });
+  }, { channel: MEDIA_CHANNELS.pickImport, hold });
 }
 async function barrier(f: Fixture, channel: string): Promise<void> {
   await f.application.evaluate(({ ipcMain }, channel) => {
@@ -166,7 +190,7 @@ test("rejects draft ABA updates and ignores late imports and send acknowledgemen
 test("purges revoked preview pixels and refuses a delayed preview reply without deleting the draft reference", async () => {
   test.setTimeout(90_000);
   await withMedia(async f => {
-    const imported = await call<{ imported: MediaItem[] }>(f.page, "importPath", { sessionId: f.bots[0]!.sessionId, workspaceId: f.workspaceId, path: "picture.png" }); const reference = imported.imported[0]!.reference;
+    const imported = await importMedia(f, [join(f.source, "picture.png")]); const reference = imported.imported[0]!.reference;
     await setMedia(f, [reference]); await barrier(f, MEDIA_CHANNELS.preview);
     await f.page.getByRole("button", { name: "预览媒体 picture.png", exact: true }).click(); await entered(f);
     await call(f.page, "unbind", { sessionId: f.bots[0]!.sessionId, id: reference.mediaId }); const preview = f.page.getByRole("dialog", { name: "媒体预览", exact: true }); await expect(preview.getByRole("alert")).toContainText("预览内容已清除"); await release(f);
@@ -183,7 +207,7 @@ test("previews real physical PDF pages including blanks and renders DOCX as esca
   test.setTimeout(90_000);
   await withMedia(async f => {
     const references: MessageMediaReference[] = [];
-    for (const path of ["pages.pdf", "sections.docx"]) { const imported = await call<{ imported: MediaItem[] }>(f.page, "importPath", { sessionId: f.bots[0]!.sessionId, workspaceId: f.workspaceId, path }); references.push(imported.imported[0]!.reference); }
+    for (const path of ["pages.pdf", "sections.docx"]) { const imported = await importMedia(f, [join(f.source, path)]); references.push(imported.imported[0]!.reference); }
     await setMedia(f, references); expect(await f.application.evaluate(() => (globalThis as MainFixture).mediaUiReads)).toBe(0);
     await f.page.getByRole("button", { name: "预览媒体 pages.pdf", exact: true }).click(); const preview = f.page.getByRole("dialog", { name: "媒体预览", exact: true });
     await expect(preview.getByRole("navigation", { name: "PDF 分页", exact: true })).toContainText("第 1 / 3 页"); await expect(preview.locator("img")).toBeVisible();

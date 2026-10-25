@@ -7,6 +7,8 @@ import { UserProfileService } from "./user-profile-service";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProductToolRequest, ResourceReference } from "@shared/contracts";
 import { PRODUCT_OPERATIONS } from "@shared/product-operations";
+import { IPC } from "@shared/channels";
+import { PRODUCT_OPERATION_SCHEMAS } from "./product-operation-schemas";
 import { AppRepository } from "./database";
 import { ProductOperationService } from "./product-operation-service";
 import type { ProductDependencies } from "./product-handlers";
@@ -428,6 +430,57 @@ describe("product operations", () => {
     expect(description.approvalRequired).toBe(false);
     expect(JSON.stringify(catalog)).not.toContain('"channel"');
   });
+  it("does not discover or execute retired workspace setup operations even when old directories remain", async () => {
+    const f = fixture();
+    const registered = await f.dependencies.workspaceService.registerRoot(f.root);
+    const retired = ["workspaces.list", "workspaces.add", "workspaces.updatePermissions", "workspaces.reveal", "workspaces.remove", "projects.list", "projects.create", "conversations.setProject", "teams.createContentTeam", "library.importPath", "documents.import", "skills.import", "media.importPath"];
+    const catalog = JSON.parse((await f.execute({ kind: "product-call", action: "catalog" })).content) as { operations: Array<{ name: string }> };
+    for (const operation of retired) {
+      expect(catalog.operations.some(item => item.name === operation)).toBe(false);
+      expect(PRODUCT_OPERATION_SCHEMAS[operation]).toBeUndefined();
+      await expect(f.execute({ kind: "product-call", action: "describe", operation })).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+    }
+    for (const channel of [IPC.workspacesList, IPC.workspacesAdd, IPC.workspacesUpdatePermissions, IPC.workspacesReveal, IPC.workspacesRemove, IPC.projectsList, IPC.projectsCreate, IPC.conversationsSetProject, IPC.teamsCreateContentTeam]) {
+      expect(f.service.handlers.has(channel)).toBe(false);
+    }
+    expect(f.repository.getWorkspace(registered.workspace.id).removedAt).toBeNull();
+    expect(f.repository.listBots()).toHaveLength(1);
+    expect(f.repository.listRooms()).toEqual([]);
+  });
+
+  it("rejects retired navigation, directory memory and project parameters before dispatch", () => {
+    const f = fixture();
+    expect(PRODUCT_OPERATION_SCHEMAS["view.request"]!.safeParse({ action: "open_workspaces" }).success).toBe(false);
+    for (const group of ["workspaces", "project", "bot_group", "room_group"]) {
+      expect(PRODUCT_OPERATION_SCHEMAS["view.request"]!.safeParse({ action: "sidebar_expand", group }).success).toBe(false);
+    }
+    expect(PRODUCT_OPERATION_SCHEMAS["memories.list"]!.safeParse({ scope: "workspace", scopeKey: crypto.randomUUID() }).success).toBe(false);
+    expect(PRODUCT_OPERATION_SCHEMAS["memories.list"]!.safeParse({ scope: "user", scopeKey: "user", includeDeleted: true }).success).toBe(true);
+    expect(PRODUCT_OPERATION_SCHEMAS["memories.create"]!.safeParse({ scope: "user", scopeKey: "user", content: "保留用户偏好。" }).success).toBe(true);
+    expect(PRODUCT_OPERATION_SCHEMAS["memories.create"]!.safeParse({ scope: "bot", scopeKey: f.actor.bot.id, content: "保留 Bot 记忆。" }).success).toBe(true);
+    expect(PRODUCT_OPERATION_SCHEMAS["bots.update"]!.safeParse({ id: f.actor.bot.id, expectedVersion: 1, patch: { memoryWorkspaceIds: [] } }).success).toBe(false);
+    expect(PRODUCT_OPERATION_SCHEMAS["bots.create"]!.safeParse({ projectId: crypto.randomUUID() }).success).toBe(false);
+    expect(f.repository.listToolInvocations(f.actor.session.id)).toEqual([]);
+  });
+
+  it("cannot reopen an old pending directory approval or read its target", async () => {
+    const f = fixture();
+    writeFileSync(join(f.root, "legacy.md"), "PRIVATE_LEGACY_FILE", "utf8");
+    const registered = await f.dependencies.workspaceService.registerRoot(f.root);
+    const actor = f.repository.createBot(registered.project.id);
+    const nonce = crypto.randomUUID();
+    f.repository.prepareMessage({ sessionId: actor.session.id, clientNonce: nonce, text: "Historical pending request" });
+    const run = f.repository.createRuntimeRun(nonce, "fake", { schemaVersion: 1, botId: actor.bot.id, profileVersion: 1, sessionId: actor.session.id, generation: 1, inputSeq: 1, blocks: [], digest: "legacy-approval" });
+    f.repository.transitionRuntimeRun(run.id, "dispatching");
+    f.repository.transitionRuntimeRun(run.id, "running", { providerRequestId: "legacy" });
+    const pending = f.repository.prepareToolInvocation({ runtimeRunId: run.id, toolCallId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID(), tool: { kind: "workspace-read", workspaceId: registered.workspace.id, path: "legacy.md", maxBytes: 100 } });
+    expect(f.repository.getApprovalRequest(pending.approval.id).state).toBe("pending");
+    expect(f.service.handlers.get(IPC.approvalsListPending)!({ sessionId: actor.session.id })).toEqual([]);
+    await expect(f.service.handlers.get(IPC.approvalsResolve)!({ sessionId: actor.session.id, id: pending.approval.id, expectedVersion: pending.approval.version, resolution: "allow-once" })).rejects.toMatchObject({ code: "LOCAL_DIRECTORY_ACCESS_REMOVED" });
+    expect(f.repository.getToolInvocation(pending.invocation.id)).toMatchObject({ attemptCount: 0, resultDigest: null, state: "awaiting-approval" });
+    expect(readFileSync(join(f.root, "legacy.md"), "utf8")).toBe("PRIVATE_LEGACY_FILE");
+  });
+
   it("requires the recorded host decision before executor mutation and records the persisted value", async () => {
     const f = fixture();
     const pending = f.prepare(call("settings.saveGeneral", { theme: "dark" }));
@@ -439,15 +492,11 @@ describe("product operations", () => {
     expect(changed.invocation.effectClass).toBe("write-reversible");
     expect(f.dependencies.generalSettings.getConfiguration().theme).toBe("dark");
   });
-  it("creates an actual team and group atomically and reuses an identical request", async () => {
+  it("rejects the retired content template without creating resources", async () => {
     const f = fixture();
-    const command = call("teams.createContentTeam", {});
-    const first = JSON.parse((await f.execute(command)).content);
-    const second = JSON.parse((await f.execute(command)).content);
-    expect(second).toEqual(first);
-    expect(f.repository.listBots()).toHaveLength(6);
-    expect(f.repository.listRooms()).toHaveLength(1);
-    expect(f.repository.listRoomMembers(f.repository.listRooms()[0]!.id)).toHaveLength(5);
+    await expect(f.execute(call("teams.createContentTeam", {}))).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+    expect(f.repository.listBots()).toHaveLength(1);
+    expect(f.repository.listRooms()).toHaveLength(0);
   });
   it("normalizes defaults and JSON field order before mutating requests are journaled", async () => {
     const f = fixture();
@@ -458,7 +507,7 @@ describe("product operations", () => {
     const b = await f.execute(call("settings.saveGeneral", { memoryCaptureEnabled: false, theme: "dark" }));
     expect(b.content).toEqual(a.content);
     expect(f.repository.listBots()).toHaveLength(2);
-    const unknown = f.prepare(call("bots.create", { projectId: undefined }));
+    const unknown = f.prepare(call("bots.create", {}));
     f.repository.resolveToolApproval(unknown.approval.id, unknown.approval.version, "allow-once");
     f.repository.transitionToolInvocation(unknown.invocation.id, "dispatching");
     f.repository.transitionToolInvocation(unknown.invocation.id, "running");
@@ -468,7 +517,7 @@ describe("product operations", () => {
   });
   it("shares the creation budget with legacy tools and does not count reused resources", async () => {
     const f = fixture();
-    await f.execute(call("teams.createContentTeam", {}));
+    await f.execute(call("bots.create", {}));
     const legacy = (name: string) => {
       const prepared = f.repository.prepareToolInvocation({ runtimeRunId: f.runtime.id, toolCallId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID(), tool: { kind: "bot-create", name, label: "", description: "", instructions: "" } });
       f.repository.resolveToolApproval(prepared.approval.id, prepared.approval.version, "allow-once");
@@ -476,9 +525,10 @@ describe("product operations", () => {
       f.repository.transitionToolInvocation(prepared.invocation.id, "running");
       return f.repository.executeProjectCreation(prepared.invocation.id);
     };
-    legacy("one"); legacy("one"); legacy("two");
+    legacy("one"); legacy("one");
+    for (const name of ["two", "three", "four", "five", "six", "seven"]) legacy(name);
     expect(f.repository.productResourceCount(f.runtime.clientNonce)).toBe(8);
-    expect(() => legacy("three")).toThrowError(expect.objectContaining({ code: "PROJECT_CREATION_LIMIT" }));
+    expect(() => legacy("eight")).toThrowError(expect.objectContaining({ code: "PROJECT_CREATION_LIMIT" }));
   });
   it("updates only the nickname while keeping the locally stored avatar", async () => {
     const f = fixture();
@@ -521,12 +571,12 @@ describe("product operations", () => {
     expect(JSON.parse((await f.execute(call("updates.installAndRestart"))).content)).toMatchObject({ status: "running", result: { scheduled: true } });
     expect(f.dependencies.requestUpdateAfterRun).toHaveBeenCalledWith(f.runtime.id);
   });
-  it("rolls the whole team back if the success receipt fails to commit", async () => {
+  it("rolls a new Bot back if the success receipt fails to commit", async () => {
     const f = fixture();
     const raw = new DatabaseSync(join(f.root, "app.sqlite"));
     raw.exec("CREATE TRIGGER reject_product_success BEFORE UPDATE OF state ON tool_invocations WHEN NEW.state = 'succeeded' BEGIN SELECT RAISE(ABORT, 'receipt failed'); END;");
     raw.close();
-    await expect(f.execute(call("teams.createContentTeam", {}))).rejects.toMatchObject({ code: "TOOL_EXECUTION_FAILED" });
+    await expect(f.execute(call("bots.create", {}))).rejects.toMatchObject({ code: "TOOL_EXECUTION_FAILED" });
     expect(f.repository.listBots()).toHaveLength(1);
     expect(f.repository.listRooms()).toHaveLength(0);
   });
@@ -725,7 +775,8 @@ describe("product operations", () => {
     const registration = await f.dependencies.workspaceService.registerRoot(source);
     const actor = f.repository.createBot(registration.project.id);
     const runtime = libraryRuntime(f.repository, actor);
-    const command = call("documents.import", { workspaceId: registration.workspace.id, path: "batch" });
+    f.dependencies.pickLibraryPaths = async () => [join(source, "batch", "one.md"), join(source, "batch", "two.md")];
+    const command = call("library.pickImport", { kind: "document" });
     const first = JSON.parse((await f.execute(command, runtime.id)).content).result;
     f.repository.library.unbind({ sessionId: actor.session.id, id: first.imported[0].resource.id });
     rmSync(source, { recursive: true });

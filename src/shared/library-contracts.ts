@@ -91,7 +91,6 @@ export type LibraryApi = {
   bind(input: LibraryBindingInput): Promise<ApiResult<SessionResourceBinding>>;
   unbind(input: LibraryBindingInput): Promise<ApiResult<boolean>>;
   pickImport(input: { sessionId: string; kind: LibraryResourceKind; directory?: boolean }): Promise<ApiResult<LibraryImportResult | null>>;
-  importPath(input: { sessionId: string; kind: LibraryResourceKind; workspaceId: string; path: string }): Promise<ApiResult<LibraryImportResult>>;
   export(input: { sessionId: string; id: string; revisionId?: string }): Promise<ApiResult<LibraryExportResult | null>>;
   onChanged(listener: (event: LibraryChangedEvent) => void): () => void;
 };

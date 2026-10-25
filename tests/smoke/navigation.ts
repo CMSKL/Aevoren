@@ -111,13 +111,19 @@ export async function openInspector(page: Page, tab: "profile" | "models" | "mem
   }
 }
 
-export async function openWorkspaceTab(page: Page): Promise<void> {
+export async function openChatsTab(page: Page): Promise<void> {
   await closeInspector(page);
-  await selectNavigationTab(page, "工作区");
-  await expect(page.locator(".sidebar-workspace")).toBeVisible();
+  await selectNavigationTab(page, "聊天");
+  await expect(page.locator("#navigation-chats")).toHaveAttribute("aria-selected", "true");
 }
 
-export async function selectNavigationTab(page: Page, name: "聊天" | "联系人" | "工作区"): Promise<void> {
+export async function openContactsTab(page: Page): Promise<void> {
+  await closeInspector(page);
+  await selectNavigationTab(page, "联系人");
+  await expect(page.locator("#navigation-contacts")).toHaveAttribute("aria-selected", "true");
+}
+
+export async function selectNavigationTab(page: Page, name: "聊天" | "联系人"): Promise<void> {
   await openBotList(page);
   const tab = page.getByRole("tab", { name, exact: true });
   if (!await tab.isVisible()) await page.getByRole("button", { name: "打开账户菜单", exact: true }).click();

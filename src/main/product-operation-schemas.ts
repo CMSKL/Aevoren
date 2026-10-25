@@ -14,7 +14,7 @@ import { resourceReferencesSchema } from "@shared/library-schemas";
 import { messageMediaReferencesSchema } from "@shared/media-schemas";
 import { MEDIA_OPERATION_SCHEMAS } from "@shared/media-product";
 import { messageBodySchema } from "@shared/schemas";
-import { artifactSaveSchema, artifactRevealSchema, capabilitySnapshotInputSchema, mcpServerMutationSchema, mcpServerEnabledSchema, mcpServerIdSchema, mcpServerMutationIdSchema, routineIdSchema, routineCreateSchema, routineUpdateSchema, routineEnabledSchema, routineMutationSchema, conversationPinnedSchema, conversationUnreadSchema, conversationHiddenSchema, sessionIdSchema, conversationProjectSchema, conversationBatchDeleteSchema, projectContextSchema, projectCreateSchema, briefApprovalReadSchema, briefApprovalCommandSchema, botUpdateSchema, botPinnedSchema, botUnreadSchema, botHiddenSchema, botIdSchema, memoryListSchema, memoryCreateSchema, memoryUpdateSchema, memoryMutationSchema, memoryProposalListSchema, memoryProposalAcceptSchema, workspacePermissionsSchema, workspaceRevealSchema, workspaceMutationSchema, toolSessionScopeSchema, approvalResolutionSchema, roomListSchema, roomCreateSchema, roomIdSchema, roomUpdateSchema, roomArchiveSchema, roomPinnedSchema, roomUnreadSchema, roomHiddenSchema, roomMembershipSchema, nonceSchema, runIdSchema, roomSendCommandSchema, batchIdSchema, turnIdSchema, generalSettingsSchema, saveOpenAiCompatibleProviderSchema, saveCliProviderSchema, providerInstanceIdInputSchema } from "@shared/schemas";
+import { artifactSaveSchema, artifactRevealSchema, capabilitySnapshotInputSchema, mcpServerMutationSchema, mcpServerEnabledSchema, mcpServerIdSchema, mcpServerMutationIdSchema, routineIdSchema, routineCreateSchema, routineUpdateSchema, routineEnabledSchema, routineMutationSchema, conversationPinnedSchema, conversationUnreadSchema, conversationHiddenSchema, sessionIdSchema, conversationBatchDeleteSchema, briefApprovalReadSchema, briefApprovalCommandSchema, botCreateSchema, botUpdateSchema, botPinnedSchema, botUnreadSchema, botHiddenSchema, botIdSchema, memoryListSchema, memoryCreateSchema, memoryUpdateSchema, memoryMutationSchema, memoryProposalListSchema, memoryProposalAcceptSchema, toolSessionScopeSchema, approvalResolutionSchema, roomListSchema, roomCreateSchema, roomIdSchema, roomUpdateSchema, roomArchiveSchema, roomPinnedSchema, roomUnreadSchema, roomHiddenSchema, roomMembershipSchema, nonceSchema, runIdSchema, roomSendCommandSchema, batchIdSchema, turnIdSchema, generalSettingsSchema, saveOpenAiCompatibleProviderSchema, saveCliProviderSchema, providerInstanceIdInputSchema } from "@shared/schemas";
 
 export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
   ...MEDIA_OPERATION_SCHEMAS,
@@ -54,11 +54,9 @@ export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
   "conversations.setUnread": conversationUnreadSchema,
   "conversations.setHidden": conversationHiddenSchema,
   "conversations.clear": sessionIdSchema,
-  "conversations.setProject": conversationProjectSchema,
   "conversations.deleteBatch": conversationBatchDeleteSchema,
-  "teams.createContentTeam": projectContextSchema.default({}),
   "bots.list": z.undefined(),
-  "bots.create": projectContextSchema.default({}),
+  "bots.create": botCreateSchema.default({}),
   "bots.update": botUpdateSchema,
   "bots.setPinned": botPinnedSchema,
   "bots.setUnread": botUnreadSchema,
@@ -74,13 +72,6 @@ export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
   "memories.listProposals": memoryProposalListSchema,
   "memories.acceptProposal": memoryProposalAcceptSchema,
   "memories.rejectProposal": memoryMutationSchema,
-  "workspaces.list": z.undefined(),
-  "workspaces.add": projectContextSchema.default({}),
-  "workspaces.updatePermissions": workspacePermissionsSchema,
-  "workspaces.reveal": workspaceRevealSchema,
-  "workspaces.remove": workspaceMutationSchema,
-  "projects.list": z.undefined(),
-  "projects.create": projectCreateSchema,
   "tools.list": toolSessionScopeSchema,
   "approvals.listPending": toolSessionScopeSchema,
   "approvals.review": approvalReviewInputSchema,
@@ -133,12 +124,12 @@ export const PRODUCT_OPERATION_SCHEMAS: Record<string, z.ZodType> = {
   "tasks.waitResult": z.object({ runId: runIdSchema, timeoutMs: z.number().int().min(1).max(30_000).default(30_000) }).strict(),
   "transcript.page": z.object({ sessionId: sessionIdSchema, afterSeq: z.number().int().nonnegative().default(0), limit: z.number().int().min(1).max(100).default(50) }).strict(),
   "view.request": z.object({
-    action: z.enum(["open_chats", "open_contacts", "open_workspaces", "open_settings", "open_profile", "open_bot", "open_room", "open_bot_profile", "open_room_settings", "task_details", "sidebar_search", "sidebar_expand", "sidebar_select", "model_search", "draft_get", "draft_update", "choose_avatar", "window_show", "window_hide", "app_exit", "dismiss_update", "draft_remove_attachment", "draft_add_attachments", "room_members", "expand_record"]),
+    action: z.enum(["open_chats", "open_contacts", "open_settings", "open_profile", "open_bot", "open_room", "open_bot_profile", "open_room_settings", "task_details", "sidebar_search", "sidebar_expand", "sidebar_select", "model_search", "draft_get", "draft_update", "choose_avatar", "window_show", "window_hide", "app_exit", "dismiss_update", "draft_remove_attachment", "draft_add_attachments", "room_members", "expand_record"]),
     botId: botIdSchema.optional(), roomId: roomIdSchema.optional(), sessionId: sessionIdSchema.optional(),
     query: z.string().max(500).optional(), unreadOnly: z.boolean().optional(),
     section: z.enum(["general", "models", "computer", "capabilities", "memory", "mcp", "apps", "routines", "updates"]).optional(),
-    tab: z.enum(["artifacts", "records"]).optional(), group: z.enum(["hidden", "archived", "workspaces", "project", "bot_group", "room_group"]).optional(),
-    projectId: z.string().uuid().optional(), expanded: z.boolean().optional(), botIds: z.array(botIdSchema).max(100).optional(), roomIds: z.array(roomIdSchema).max(100).optional(),
+    tab: z.enum(["artifacts", "records"]).optional(), group: z.enum(["hidden", "archived"]).optional(),
+    expanded: z.boolean().optional(), botIds: z.array(botIdSchema).max(100).optional(), roomIds: z.array(roomIdSchema).max(100).optional(),
     attachmentId: z.string().uuid().optional(), recordId: z.string().uuid().optional(),
     text: z.string().max(100_000).optional(), expectedDigest: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
     routingMode: z.enum(["automatic", "explicit", "everyone"]).optional(), targetBotIds: z.array(botIdSchema).max(6).optional(),

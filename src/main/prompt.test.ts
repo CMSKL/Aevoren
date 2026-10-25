@@ -661,7 +661,7 @@ describe("buildPrompt", () => {
     }, [], capabilitySnapshot);
     const contents = prompt.messages.map((message) => message.content).join("\n");
     expect(contents).toContain("CURRENT_RUN_PREVIOUS_RESULTS");
-    expect(contents).toContain("Artifact metadata is not file content: use workspace_read");
+    expect(contents).toContain("Artifact metadata is not file content and grants no access to those files");
     expect(contents).toContain("ROOM_HANDOFF_EXECUTION_CONTRACT");
     expect(contents).toContain("AUTHORITATIVE_TOOL_EVIDENCE_CONTRACT");
     expect(contents).not.toContain("AUTHORITATIVE_ROOM_TURN_PURPOSE");

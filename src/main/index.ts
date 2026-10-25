@@ -640,19 +640,6 @@ app.whenReady().then(async () => {
     mcpService,
     routineService,
     updateService,
-    async pickWorkspaceRoot() {
-      const testPath = process.env.AEVOREN_BOT_TEST_HIDDEN === "1"
-        ? process.env.AEVOREN_BOT_WORKSPACE_TEST_PATH?.trim()
-        : undefined;
-      if (testPath) return testPath;
-      if (!mainWindow || mainWindow.isDestroyed()) return null;
-      const result = await dialog.showOpenDialog(mainWindow, {
-        title: "选择工作区文件夹",
-        buttonLabel: "授权此文件夹",
-        properties: ["openDirectory", "createDirectory"],
-      });
-      return result.canceled ? null : result.filePaths[0] ?? null;
-    },
     async pickAttachments() {
       const testPaths = process.env.AEVOREN_BOT_TEST_HIDDEN === "1"
         ? process.env.AEVOREN_BOT_ATTACHMENT_TEST_PATHS?.split("\n").map((value) => value.trim()).filter(Boolean)
@@ -690,11 +677,6 @@ app.whenReady().then(async () => {
     revealArtifact(path) {
       if (!savedArtifactPaths.has(path)) return false;
       if (!hideTestWindow) shell.showItemInFolder(path);
-      return true;
-    },
-    async revealWorkspaceTarget(input) {
-      const target = await workspaceService.resolveExistingTarget(input.workspaceId, input.path, "file");
-      if (!hideTestWindow) shell.showItemInFolder(target.canonicalPath);
       return true;
     },
     requestUpdateAfterRun(runId) {

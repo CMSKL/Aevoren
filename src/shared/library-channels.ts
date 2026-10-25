@@ -5,5 +5,5 @@ export const LIBRARY_CHANNELS = {
   importText: "library:import-text", update: "library:update", setEnabled: "library:set-enabled",
   delete: "library:delete", restore: "library:restore", versions: "library:versions",
   restoreVersion: "library:restore-version", bind: "library:bind", unbind: "library:unbind",
-  pickImport: "library:pick-import", importPath: "library:import-path", export: "library:export",
+  pickImport: "library:pick-import", export: "library:export",
 } as const;

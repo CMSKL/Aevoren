@@ -504,29 +504,14 @@ export class RuntimeExecutor {
     }
     const evidenceRequestText = toolsAllowed ? input.incomingHandoff?.task ?? user.body : "";
     const rootRequirements = input.executionReceipt?.taskRequirements.text ?? user.body;
-    const requestedTools = requiredToolNames(evidenceRequestText);
+    const requestedTools = requiredToolNames(evidenceRequestText).filter(name => !name.startsWith("workspace_"));
     const evidenceToolNames = new Set(input.room && !input.incomingHandoff ? requestedTools.filter(name => name === "product_catalog") : requestedTools);
-    if (toolsAllowed && requestedReadPaths(evidenceRequestText).length > 0) evidenceToolNames.add("workspace_read");
-    if (input.executionReceipt?.artifacts.length) evidenceToolNames.add("workspace_read");
-    if (bot.name === "事实编辑" && /审校|审查|review/iu.test(evidenceRequestText)) {
-      evidenceToolNames.add("workspace_write");
-    }
     const isScopedHandoff = Boolean(input.incomingHandoff);
     const allowNetworkTools = toolsAllowed && providerCapabilities?.networkTools === true && (!isScopedHandoff || requestsNetworkTools(evidenceRequestText));
     const allowMcpTools = toolsAllowed && providerCapabilities?.networkTools === true && (!isScopedHandoff || requestsMcpTools(evidenceRequestText));
     const allowDeviceTools = toolsAllowed && providerCapabilities?.networkTools === true && (!isScopedHandoff || requestsDeviceTools(evidenceRequestText));
     if (/text_measure/iu.test(bot.instructions) && /写|草稿|审校|长度|draft|review/iu.test(evidenceRequestText)) {
       evidenceToolNames.add("text_measure");
-    }
-    if (toolsAllowed && input.room?.orchestrationEnabled) {
-      const requiredByRole: Record<string, string[]> = {
-        情报侦察员: ["web_fetch", "workspace_write"],
-        选题策划师: ["workspace_read", "workspace_write"],
-        内容主笔: ["workspace_read", "text_measure", "workspace_write"],
-        事实编辑: ["workspace_read", "web_fetch", "text_measure", "workspace_write"],
-        数据复盘师: ["workspace_read", "workspace_write"],
-      };
-      for (const name of requiredByRole[bot.name] ?? []) evidenceToolNames.add(name);
     }
     const active: ActiveRun = {
       controller: new AbortController(),
@@ -554,9 +539,7 @@ export class RuntimeExecutor {
         ...(input.room?.roster ? { roomRoster: input.room.roster } : {}),
         ...(input.incomingHandoff ? { incomingHandoff: input.incomingHandoff } : {}),
         ...(toolsAllowed && input.executionReceipt ? { executionReceipt: input.executionReceipt } : {}),
-        workspaces: toolsAllowed && providerCapabilities?.workspaceTools === true
-          ? this.repository.listSessionWorkspaces(session.id, bot.id).map(({ id, name, writeEnabled, automationEnabled }) => ({ id, name, writeEnabled, automationEnabled }))
-          : [],
+        workspaces: [],
         networkTools: allowNetworkTools,
         mcpTools: allowMcpTools ? this.mcpTools?.availableTools(bot.id) ?? [] : [],
         deviceTools: allowDeviceTools && user.origin?.kind !== "ai-delegation",
@@ -890,6 +873,7 @@ export class RuntimeExecutor {
         }
         if (event.type === "workspace-tool" || event.type === "network-tool" || event.type === "mcp-tool" || event.type === "device-tool" || event.type === "computation-tool" || event.type === "project-tool") {
           if (!active.providerStarted || !this.workspaceTools) throw new AevorenBotError("RUNTIME_STATE_INVALID");
+          if (event.tool.kind.startsWith("workspace-")) throw new AevorenBotError("LOCAL_DIRECTORY_ACCESS_REMOVED");
           // A follow-up can supply only the missing role/name. Exact user approval,
           // rather than creation keywords in the latest sentence, authorizes writes.
           if (event.type === "project-tool" && (!active.providerContext.projectTools ||

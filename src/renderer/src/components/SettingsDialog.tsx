@@ -38,7 +38,6 @@ type SettingsDialogProps = {
   onCheckUpdate(): void;
   onRetryUpdate(): void;
   onInstallUpdate(): void;
-  onOpenWorkspaceManager?(): void;
 };
 
 const loginItemStatusLabels: Record<LoginItemStatus, string> = {
@@ -85,7 +84,6 @@ export const SettingsDialog = forwardRef<SettingsDialogHandle, SettingsDialogPro
   onCheckUpdate,
   onRetryUpdate,
   onInstallUpdate,
-  onOpenWorkspaceManager,
 }, ref): React.JSX.Element | null {
   const [section, setSection] = useState<SettingsSection>(initialSection);
   const modelState = useRef<ModelSettingsPanelState>({ dirty: false, pending: false });
@@ -272,11 +270,6 @@ export const SettingsDialog = forwardRef<SettingsDialogHandle, SettingsDialogPro
 
           {section === "capabilities" ? <section className="settings-panel" aria-label="能力与权限">
             <CapabilitiesSettingsPanel active={open && section === "capabilities"} botId={null} onOpenModels={() => changeSection("models")} />
-            {onOpenWorkspaceManager ? <section className="settings-legacy-management" aria-labelledby="settings-local-management-title">
-              <h3 id="settings-local-management-title">本地文件与聊天管理</h3>
-              <p>目录授权、项目和归档恢复使用现有管理方式。</p>
-              <button type="button" className="secondary-button" onClick={onOpenWorkspaceManager}>打开管理</button>
-            </section> : null}
           </section> : null}
 
           {section === "memory" ? <section className="settings-panel" aria-label="长期记忆">

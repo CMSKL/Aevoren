@@ -408,7 +408,7 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     );
     expect(capabilityResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot).toSorted())).toEqual([
-      "app", "applications", "approvals", "artifacts", "attachments", "bots", "browser", "capabilities", "computer", "computerModel", "computerTasks", "connectors", "conversations", "demonstrations", "drafts", "environments", "events", "execution", "hostComputer", "library", "mcp", "mcpWrites", "media", "memories", "messages", "outbound", "preview", "processes", "productUI", "projects", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "skillsExecution", "teams", "tools", "transcript", "updates", "userProfile", "workspaces",
+      "app", "applications", "approvals", "artifacts", "attachments", "bots", "browser", "capabilities", "computer", "computerModel", "computerTasks", "connectors", "conversations", "demonstrations", "drafts", "environments", "events", "execution", "hostComputer", "library", "mcp", "mcpWrites", "media", "memories", "messages", "outbound", "preview", "processes", "productUI", "providers", "roomRuntime", "rooms", "routines", "runtime", "sessions", "settings", "skillsExecution", "tools", "transcript", "updates", "userProfile",
     ]);
     expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.hostComputer).toSorted())).toEqual(["control", "openBrowserExtension", "pairBrowser", "permission", "preview", "revokeBrowser", "save", "status", "targets"]);
     expect(await launched.page.evaluate(() => Object.keys((window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.computerModel).toSorted())).toEqual(["get", "save", "test"]);
@@ -417,7 +417,7 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     expect(await launched.page.evaluate(() => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.computerTasks.get({ sessionId: "not-a-uuid", executorBotId: "not-a-uuid", id: "not-a-uuid" }))).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.media,
-    ).toSorted())).toEqual(["available", "bind", "delete", "importPath", "list", "metadata", "onChanged", "pickImport", "preview", "read", "restore", "setEnabled", "unbind"]);
+    ).toSorted())).toEqual(["available", "bind", "delete", "list", "metadata", "onChanged", "pickImport", "preview", "read", "restore", "setEnabled", "unbind"]);
     const mediaResult = await launched.page.evaluate(() =>
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.media.metadata({ sessionId: "not-a-uuid", id: "not-a-uuid" }),
     );
@@ -501,20 +501,17 @@ test("exposes only typed runtime capabilities and validates run ids", async () =
     for (const result of environmentValidation) expect(result).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.library,
-    ).toSorted())).toEqual(["available", "bind", "create", "delete", "export", "importPath", "importText", "list", "onChanged", "pickImport", "read", "readFile", "restore", "restoreVersion", "setEnabled", "unbind", "update", "versions"]);
+    ).toSorted())).toEqual(["available", "bind", "create", "delete", "export", "importText", "list", "onChanged", "pickImport", "read", "readFile", "restore", "restoreVersion", "setEnabled", "unbind", "update", "versions"]);
     const libraryResult = await launched.page.evaluate(() =>
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.library.list({ sessionId: "not-a-uuid" }),
     );
     expect(libraryResult).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", domain: "validation" } });
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.conversations,
-    ).toSorted())).toEqual(["clear", "deleteBatch", "list", "setHidden", "setPinned", "setProject", "setUnread"]);
+    ).toSorted())).toEqual(["clear", "deleteBatch", "list", "setHidden", "setPinned", "setUnread"]);
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.artifacts,
     ).toSorted())).toEqual(["reveal", "save"]);
-    expect(await launched.page.evaluate(() => Object.keys(
-      (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.workspaces,
-    ).toSorted())).toEqual(["add", "list", "remove", "reveal", "updatePermissions"]);
     expect(await launched.page.evaluate(() => Object.keys(
       (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.providers,
     ).toSorted())).toEqual(["list", "refresh", "saveCli", "saveOpenAiCompatible", "scan", "test"]);

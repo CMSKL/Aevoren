@@ -3673,12 +3673,10 @@ export class AppRepository {
   }
 
   getMemoryCaptureScopes(botId: string, sessionId: string): MemoryScopeSelector[] {
-    const bot = this.getBot(botId);
-    const workspaces = this.listSessionWorkspaces(sessionId, botId);
+    this.getBot(botId);
+    this.assertSessionExecutor(sessionId, botId);
     return [
       { scope: "user", scopeKey: "user" },
-      ...workspaces.filter((workspace) => (bot.memoryWorkspaceIds ?? []).includes(workspace.id))
-        .map((workspace): MemoryScopeSelector => ({ scope: "workspace", scopeKey: workspace.id })),
       { scope: "bot", scopeKey: botId },
     ];
   }

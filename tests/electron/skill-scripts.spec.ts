@@ -10,7 +10,6 @@ import { ENV_WORKER_VERSION, type EnvironmentScope } from "../../src/shared/envi
 import type { ApprovalReviewResult, SkillExecutionGrant } from "../../src/shared/skill-execution-contracts";
 import { IPC } from "../../src/shared/channels";
 import { AppRepository } from "../../src/main/database";
-import { WorkspaceService } from "../../src/main/workspace-service";
 import { DockerDriver } from "../../src/main/docker-driver";
 import { openInspector } from "../smoke/navigation";
 import { closeTestApplication, removeTestDirectory } from "../smoke/test-cleanup";
@@ -28,9 +27,8 @@ async function withScripts(callback: (fixture: Fixture) => Promise<void>): Promi
   writeFileSync(join(packagePath, "scripts", "main.py"), "import json,sys\nfrom pathlib import Path\nprint('PYTHON_SCRIPT_ACTUAL:'+json.dumps(sys.argv[1:]))\nprint((Path(__file__).parent.parent/'assets/value.txt').read_text())\nPath('python-receipt.txt').write_text(json.dumps(sys.argv[1:]))\n");
   writeFileSync(join(packagePath, "scripts", "main.js"), "const fs=require('node:fs'),path=require('node:path');\nconsole.log('NODE_SCRIPT_ACTUAL:'+JSON.stringify(process.argv.slice(2)));\nconsole.log(fs.readFileSync(path.join(__dirname,'../assets/value.txt'),'utf8'));\nfs.writeFileSync('node-receipt.txt',JSON.stringify(process.argv.slice(2)));\n");
   const databasePath = join(directory, "aevoren-bot.sqlite"); const repository = new AppRepository(databasePath);
-  const registration = await new WorkspaceService(repository).registerRoot(source);
-  const bots = ["脚本验收成员 A", "脚本验收成员 B"].map(name => { const created = repository.createBot(registration.project.id); const bot = repository.updateBot(created.bot.id, created.bot.version, { name, mcpServerIds: [], modelSelection: { providerInstanceId: "openai-compatible.default", modelId: "script-fixture-model" } }); return { id: bot.id, sessionId: created.session.id, name }; });
-  const room = repository.createRoom({ name: "脚本验收群", memberBotIds: bots.map(bot => bot.id), leadBotId: null, projectId: registration.project.id });
+  const bots = ["脚本验收成员 A", "脚本验收成员 B"].map(name => { const created = repository.createBot(); const bot = repository.updateBot(created.bot.id, created.bot.version, { name, mcpServerIds: [], modelSelection: { providerInstanceId: "openai-compatible.default", modelId: "script-fixture-model" } }); return { id: bot.id, sessionId: created.session.id, name }; });
+  const room = repository.createRoom({ name: "脚本验收群", memberBotIds: bots.map(bot => bot.id), leadBotId: null });
   repository.setSetting("memory.capture.enabled", "false", false); repository.close();
   let modelGrant: SkillExecutionGrant | null = null;
   const server = createServer(async (request, response) => {
@@ -46,7 +44,7 @@ async function withScripts(callback: (fixture: Fixture) => Promise<void>): Promi
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve)); const address = server.address(); if (!address || typeof address === "string") throw new Error("Model fixture port unavailable");
     const environment = Object.fromEntries(Object.entries(process.env).filter(([key, data]) => data !== undefined && !key.startsWith("AEVOREN_BOT_")));
     const executablePath = process.env.AEVOREN_PACKAGED_APP_PATH;
-    application = await electron.launch({ ...(executablePath ? { executablePath } : {}), args: executablePath ? [] : ["."], cwd: process.cwd(), env: { ...environment, AEVOREN_BOT_USER_DATA_DIR: directory, AEVOREN_BOT_TEST_HIDDEN: "1", AEVOREN_BOT_DISABLE_UPDATES: "1", AEVOREN_BOT_FAKE_PROVIDER: "0" } });
+    application = await electron.launch({ ...(executablePath ? { executablePath } : {}), args: executablePath ? [] : ["."], cwd: process.cwd(), env: { ...environment, AEVOREN_BOT_USER_DATA_DIR: directory, AEVOREN_BOT_TEST_HIDDEN: "1", AEVOREN_BOT_DISABLE_UPDATES: "1", AEVOREN_BOT_FAKE_PROVIDER: "0", AEVOREN_BOT_LIBRARY_IMPORT_TEST_PATHS: packagePath } });
     if (executablePath) {
       const runtime = await application.evaluate(({ app }) => ({ isPackaged: app.isPackaged, version: app.getVersion(), resourcesPath: process.resourcesPath }));
       expect(runtime.isPackaged).toBe(true); expect(runtime.version).toBe(JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")).version);
@@ -62,7 +60,8 @@ async function withScripts(callback: (fixture: Fixture) => Promise<void>): Promi
     const scope = { sessionId: bots[0]!.sessionId, executorBotId: bots[0]!.id };
     const initialized = value(await page.evaluate(() => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.environments.initialize())); expect(initialized.probe.available).toBe(true);
     value(await page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.environments.start(input), scope));
-    const imported = value(await page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.library.importPath(input), { sessionId: scope.sessionId, kind: "skill" as const, workspaceId: registration.workspace.id, path: "skill" }));
+    const imported = value(await page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.library.pickImport(input), { sessionId: scope.sessionId, kind: "skill" as const, directory: true }));
+    if (!imported) throw new Error("The explicit test Skill selection was cancelled");
     const content = imported.imported[0]!;
     await callback({ page, application, scope, bots, room: { id: room.room.id, sessionId: room.session.id, name: room.room.name }, content, setModelGrant(grant) { modelGrant = grant; } });
     expect(errors).toEqual([]); expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some(window => window.isVisible()))).toBe(false);

@@ -63,7 +63,7 @@ test("opens settings from the account menu and preserves general and model confi
     await page.getByRole("button", { name: "能力与权限", exact: true }).click();
     await expect(page.getByRole("heading", { name: "能力与权限", exact: true })).toBeVisible();
     await expect(page.locator('[data-capability="conversation.text"]')).toContainText("可用");
-    await expect(page.locator('[data-capability="workspace.read"]')).toContainText("需要授权");
+    await expect(page.locator('[data-capability^="workspace."]')).toHaveCount(0);
     await expect(page.locator('[data-capability="network.search"]')).toContainText("可用");
     await expect(page.getByText("仅前台运行", { exact: false })).toBeVisible();
     await captureElectron(application, "/tmp/aevoren-settings-capabilities-modal.png", page.locator(".settings-dialog"));
@@ -150,7 +150,6 @@ test("opens settings from the account menu and preserves general and model confi
     await expect(page.getByText("mcp-settings-secret", { exact: false })).toHaveCount(0);
 
     await page.getByRole("button", { name: "长期记忆", exact: true }).click();
-    await expect(page.getByLabel("Memory 范围")).toHaveValue("user");
     await expect(page.getByLabel("后台生成 Memory 候选")).toBeChecked();
     await page.getByLabel("后台生成 Memory 候选").uncheck();
     await page.getByLabel("新增范围 Memory").fill("所有 Bot 都使用简洁中文回答");

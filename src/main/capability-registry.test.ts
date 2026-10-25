@@ -34,6 +34,15 @@ function provider(): ProviderInstanceInfo {
 }
 
 describe("CapabilityRegistry", () => {
+  it("checks executor ownership even after directory permissions are removed from the snapshot", async () => {
+    const repository = new AppRepository(":memory:"); repositories.push(repository);
+    const actor = repository.createBot(), other = repository.createBot(), current = provider();
+    const registry = new CapabilityRegistry(repository, { list: async () => [current], getCached: () => current, getCapabilities: () => current.capabilities },
+      { name: "Aevoren", version: "1", platform: "darwin", architecture: "arm64", packaged: false });
+    await expect(registry.getSnapshot({ botId: actor.bot.id, sessionId: other.session.id })).rejects.toThrow();
+    await expect(registry.getSnapshot({ botId: actor.bot.id, sessionId: actor.session.id })).resolves.toMatchObject({ workspaceCount: 0 });
+  });
+
   it("reports media pixel transport independently of a running browser and leaves model vision unconfirmed", async () => {
     const repository = new AppRepository(":memory:"); repositories.push(repository);
     const actor = repository.createBot(), current = provider(); current.capabilities.toolImageInput = true;
@@ -115,7 +124,8 @@ describe("CapabilityRegistry", () => {
     repository.updateWorkspacePermissions(workspace.id, workspace.version, { writeEnabled: true, automationEnabled: false });
     const registry = new CapabilityRegistry(repository, { list: async () => [current], getCached: () => current, getCapabilities: () => current.capabilities }, { name: "Aevoren", version: "1", platform: "darwin", architecture: "arm64", packaged: false });
     const snapshot = await registry.getSnapshot({ botId: bot.id });
-    expect(snapshot.availableTools).toEqual(["workspace_list", "workspace_read", "workspace_search", "workspace_write", "web_search", "web_fetch"]);
+    expect(snapshot.availableTools).toEqual(["web_search", "web_fetch"]);
+    expect(snapshot.capabilities.some(item => item.id.startsWith("workspace."))).toBe(false);
     for (const id of ["project.provisioning", "computation.text-measure", "network.realtime-data", "device.clipboard"]) expect(snapshot.capabilities.find(capability => capability.id === id)?.availability).toBe("unavailable");
   });
 
@@ -148,11 +158,7 @@ describe("CapabilityRegistry", () => {
       workspaceCount: 0,
       backgroundMode: "foreground-only",
     });
-    expect(beforeGrant.capabilities.find((item) => item.id === "workspace.read")).toMatchObject({
-      availability: "permission-required",
-      permissionState: "not-granted",
-      toolNames: [],
-    });
+    expect(beforeGrant.capabilities.some(item => item.id.startsWith("workspace."))).toBe(false);
     expect(beforeGrant.capabilities.find((item) => item.id === "network.search")).toMatchObject({
       availability: "available",
       adapterKind: "connector",
@@ -164,15 +170,17 @@ describe("CapabilityRegistry", () => {
     expect(afterGrant.availableTools).toEqual([
       "product_catalog", "product_describe", "product_execute",
       "project_list_bots", "bot_create", "room_create",
-      "text_measure", "workspace_list", "workspace_read", "workspace_search", "web_search", "web_fetch", "time_now", "weather_current", "clipboard_read",
+      "text_measure", "web_search", "web_fetch", "time_now", "weather_current", "clipboard_read",
     ]);
-    expect(afterGrant.permissions[0]).toMatchObject({ state: "granted", scopeSummary: "1 个已授权文件夹" });
+    expect(afterGrant.workspaceCount).toBe(0);
+    expect(afterGrant.permissions.some(item => item.id.startsWith("workspace."))).toBe(false);
+    expect(repository.getWorkspace(registered.workspace.id).removedAt).toBeNull();
 
     const prompt = registry.forPrompt(bot.id, bot.modelSelection, true);
     expect(prompt.availableTools).toEqual([
       "product_catalog", "product_describe", "product_execute",
       "project_list_bots", "bot_create", "room_create",
-      "handoff_to_agent", "text_measure", "workspace_list", "workspace_read", "workspace_search", "web_search", "web_fetch", "time_now", "weather_current", "clipboard_read",
+      "handoff_to_agent", "text_measure", "web_search", "web_fetch", "time_now", "weather_current", "clipboard_read",
     ]);
     const serialized = JSON.stringify(prompt);
     expect(serialized).not.toContain("capability-secret-root");

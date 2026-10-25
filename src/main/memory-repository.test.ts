@@ -67,7 +67,7 @@ afterEach(() => {
 });
 
 describe("explicit Memory repository", () => {
-  it("isolates user, Bot, and explicitly bound Workspace Memory scopes", () => {
+  it("keeps legacy Workspace Memory stored but excludes it from active User and Bot context", () => {
     const value = repository();
     const firstCreated = value.createBot();
     const second = value.createBot().bot;
@@ -84,13 +84,14 @@ describe("explicit Memory repository", () => {
     value.createMemory(second.id, "BOT_B_MEMORY");
 
     expect(value.listRuntimeMemories(first.id).map((memory) => memory.content).toSorted()).toEqual([
-      "USER_PREFERENCE", "PROJECT_A_STATE", "BOT_A_MEMORY",
+      "USER_PREFERENCE", "BOT_A_MEMORY",
     ].toSorted());
     expect(value.listRuntimeMemories(second.id).map((memory) => memory.content).toSorted()).toEqual([
       "USER_PREFERENCE", "BOT_B_MEMORY",
     ].toSorted());
     expect(userMemory).toMatchObject({ scope: "user", scopeKey: "user", botId: null, workspaceId: null });
     expect(projectMemory).toMatchObject({ scope: "workspace", scopeKey: workspace.id, botId: null, workspaceId: workspace.id });
+    expect(value.getMemory(projectMemory.id).content).toBe("PROJECT_A_STATE");
 
     const updated = value.updateBot(first.id, first.version, { memoryWorkspaceIds: [] });
     expect(updated.memoryWorkspaceIds).toEqual([]);

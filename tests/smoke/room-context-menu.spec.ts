@@ -1,5 +1,5 @@
 import { removeTestDirectory } from "./test-cleanup";
-import { openBotList, openWorkspaceTab } from "./navigation";
+import { openBotList, openChatsTab } from "./navigation";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -90,8 +90,7 @@ test("supports the first compact messenger-style Room context actions without to
     menu = await roomMenu(page, "新 协作室");
     await menu.getByRole("menuitem", { name: "归档群聊" }).click();
     await expect(roomRow(page, "新 协作室")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "已归档 (1)" })).toHaveCount(0);
-    await openWorkspaceTab(page);
+    await openChatsTab(page);
     await page.getByRole("button", { name: "已归档 (1)" }).click();
     await expect(page.getByText("新 协作室", { exact: true })).toBeVisible();
     await page.getByTestId(`archive-room-${detail.room.id}`).getByRole("button", { name: "恢复", exact: true }).click();

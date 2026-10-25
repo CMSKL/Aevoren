@@ -8,6 +8,7 @@ export const workspaceIdSchema = z.string().uuid();
 export const projectIdSchema = z.string().uuid();
 export const projectCreateSchema = z.object({ name: z.string().trim().min(1).max(80) }).strict();
 export const projectContextSchema = z.object({ projectId: projectIdSchema.optional() }).strict();
+export const botCreateSchema = z.object({}).strict();
 export const modelSelectionSchema = z.object({
   providerInstanceId: providerInstanceIdSchema,
   modelId: z.string().trim().max(200),
@@ -26,8 +27,7 @@ export const botUpdateSchema = z.object({
       avatarShape: z.enum(BOT_AVATAR_SHAPES).optional(),
       avatarColor: z.enum(BOT_AVATAR_COLORS).optional(),
       mcpServerIds: z.array(z.string().uuid()).max(20).refine((ids) => new Set(ids).size === ids.length, "MCP server ids must be unique").nullable().optional(),
-      memoryWorkspaceIds: z.array(workspaceIdSchema).max(20).refine((ids) => new Set(ids).size === ids.length, "Memory workspace ids must be unique").optional(),
-    })
+    }).strict()
     .refine((patch) => Object.keys(patch).length > 0, "At least one field is required"),
 });
 
@@ -65,22 +65,23 @@ const legacyMemoryCreateSchema = z.object({
   kind: memoryKindSchema.optional(),
   expiresAt: memoryExpiresAtSchema.optional(),
 }).strict();
-export const memoryScopeSelectorSchema = z.discriminatedUnion("scope", [
-  z.object({ scope: z.literal("user"), scopeKey: z.literal("user") }).strict(),
-  z.object({ scope: z.literal("bot"), scopeKey: botIdSchema }).strict(),
-  z.object({ scope: z.literal("workspace"), scopeKey: workspaceIdSchema }).strict(),
-]);
+const userMemoryScopeSchema = z.object({ scope: z.literal("user"), scopeKey: z.literal("user") }).strict();
+const botMemoryScopeSchema = z.object({ scope: z.literal("bot"), scopeKey: botIdSchema }).strict();
+export const memoryScopeSelectorSchema = z.discriminatedUnion("scope", [userMemoryScopeSchema, botMemoryScopeSchema]);
 export const memoryListSchema = z.union([
   legacyMemoryListSchema,
-  memoryScopeSelectorSchema.and(z.object({ includeDeleted: z.boolean().optional() })),
+  userMemoryScopeSchema.extend({ includeDeleted: z.boolean().optional() }),
+  botMemoryScopeSchema.extend({ includeDeleted: z.boolean().optional() }),
 ]);
+const memoryCreateFields = {
+  content: memoryContentSchema,
+  kind: memoryKindSchema.optional(),
+  expiresAt: memoryExpiresAtSchema.optional(),
+};
 export const memoryCreateSchema = z.union([
   legacyMemoryCreateSchema,
-  memoryScopeSelectorSchema.and(z.object({
-    content: memoryContentSchema,
-    kind: memoryKindSchema.optional(),
-    expiresAt: memoryExpiresAtSchema.optional(),
-  })),
+  userMemoryScopeSchema.extend(memoryCreateFields),
+  botMemoryScopeSchema.extend(memoryCreateFields),
 ]);
 export const memoryUpdateSchema = z.object({
   id: memoryIdSchema,
@@ -291,12 +292,11 @@ const roomMemberIdsSchema = z.array(botIdSchema).min(2).max(6).refine(
 );
 
 export const roomCreateSchema = z.object({
-  projectId: projectIdSchema.optional(),
   leadBotId: botIdSchema.nullable().optional(),
   memberBotIds: roomMemberIdsSchema,
   name: z.string().trim().min(1).max(72).optional(),
   description: z.string().trim().max(2_000).optional(),
-});
+}).strict();
 
 export const roomUpdateSchema = z.object({
   id: roomIdSchema,

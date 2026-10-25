@@ -3,41 +3,43 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test, type ElectronApplication } from "@playwright/test";
-import { removeTestDirectory } from "./test-cleanup";
+import { AppRepository } from "../../src/main/database";
+import { closeTestApplicationWithExit, removeTestDirectory } from "./test-cleanup";
+import { selectNavigationTab } from "./navigation";
 
-test("creates and restores one complete content team without duplicate partial resources", async () => {
-  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-team-template-"));
-  const environment = { ...process.env, AEVOREN_BOT_USER_DATA_DIR: userDataDir, AEVOREN_BOT_FAKE_PROVIDER: "1" };
-  let application: ElectronApplication | undefined = await electron.launch({ args: ["."], cwd: process.cwd(), env: environment });
+test("keeps an existing content team after restart without exposing the retired folder-based template", async () => {
+  const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-legacy-team-"));
+  const databasePath = join(userDataDir, "aevoren-bot.sqlite");
+  const repository = new AppRepository(databasePath);
+  const team = repository.createContentTeamTemplate();
+  repository.setSetting("memory.capture.enabled", "false", false);
+  repository.close();
+  const environment = { ...process.env, AEVOREN_BOT_USER_DATA_DIR: userDataDir, AEVOREN_BOT_FAKE_PROVIDER: "1", AEVOREN_BOT_DISABLE_UPDATES: "1" };
+  let application: ElectronApplication | undefined;
   try {
-    let page = await application.firstWindow();
-    const consoleErrors: string[] = [];
-    page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
-    await page.getByRole("button", { name: "新建聊天", exact: true }).click();
-    await page.getByRole("button", { name: /一键创建内容团队/u }).click();
-    await expect(page.getByRole("heading", { name: "自媒体内容团队", exact: true })).toBeVisible();
-    for (const name of ["情报侦察员", "选题策划师", "内容主笔", "事实编辑", "数据复盘师"]) {
-      await expect(page.locator(".bot-row").filter({ hasText: name })).toHaveCount(1);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      application = await electron.launch({ args: ["."], cwd: process.cwd(), env: environment });
+      const page = await application.firstWindow();
+      await expect(page.locator(".app-shell")).toBeVisible();
+      await selectNavigationTab(page, "联系人");
+      for (const bot of team.bots) await expect(page.getByRole("listitem", { name: bot.name, exact: true })).toHaveCount(1);
+      await selectNavigationTab(page, "聊天");
+      await expect(page.getByRole("listitem", { name: team.room.room.name, exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "新建聊天", exact: true }).click();
+      await expect(page.getByRole("button", { name: "一键创建内容团队", exact: true })).toHaveCount(0);
+      await page.getByRole("button", { name: "关闭新聊天", exact: true }).click();
+      await closeTestApplicationWithExit(application);
+      application = undefined;
     }
-    await application.close();
-
-    application = await electron.launch({ args: ["."], cwd: process.cwd(), env: environment });
-    page = await application.firstWindow();
-    await page.getByRole("button", { name: "新建聊天", exact: true }).click();
-    await page.getByRole("button", { name: /一键创建内容团队/u }).click();
-    await expect(page.getByRole("heading", { name: "自媒体内容团队", exact: true })).toBeVisible();
-    expect(consoleErrors).toEqual([]);
-    await application.close();
-    application = undefined;
-
-    const database = new DatabaseSync(join(userDataDir, "aevoren-bot.sqlite"), { readOnly: true });
-    expect(database.prepare("SELECT COUNT(*) AS count FROM bots WHERE deleted_at IS NULL").get()).toEqual({ count: 5 });
-    expect(database.prepare("SELECT COUNT(*) AS count FROM rooms").get()).toEqual({ count: 1 });
-    expect(database.prepare("SELECT COUNT(*) AS count FROM room_members").get()).toEqual({ count: 5 });
-    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    database.close();
+    const database = new DatabaseSync(databasePath, { readOnly: true });
+    try {
+      expect(database.prepare("SELECT COUNT(*) AS count FROM bots WHERE deleted_at IS NULL").get()).toEqual({ count: 5 });
+      expect(database.prepare("SELECT COUNT(*) AS count FROM rooms").get()).toEqual({ count: 1 });
+      expect(database.prepare("SELECT COUNT(*) AS count FROM room_members").get()).toEqual({ count: 5 });
+      expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    } finally { database.close(); }
   } finally {
-    if (application) await application.close();
+    if (application) await closeTestApplicationWithExit(application);
     removeTestDirectory(userDataDir);
   }
 });

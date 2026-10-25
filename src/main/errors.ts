@@ -44,6 +44,7 @@ export const ERROR_REGISTRY = {
   DEMONSTRATION_UNSUPPORTED: { domain: "tool", retryable: false, safeMessage: "当前浏览器镜像不支持示范，请停止后明确重建隔离环境；后台服务不会自动重建。", allowedDetailKeys: [] },
   DEMONSTRATION_INPUT_UNSUPPORTED: { domain: "tool", retryable: false, safeMessage: "当前电脑连接输入格式无法录制。录制已停止，请重新连接后明确开始示范。", allowedDetailKeys: [] },
   DEMONSTRATION_VIEWER_REQUIRED: { domain: "tool", retryable: false, safeMessage: "请先接管并连接电脑，再明确开始示范。", allowedDetailKeys: [] },
+  LOCAL_DIRECTORY_ACCESS_REMOVED: { domain: "security", retryable: false, safeMessage: "本地目录访问功能已移除，未读取或修改原文件。请使用资料库或内置电脑处理文件。", allowedDetailKeys: [] },
   INVALID_REQUEST: { domain: "validation", retryable: false, safeMessage: "请求参数不符合要求。", allowedDetailKeys: [] },
   CONNECTOR_UNAVAILABLE: { domain: "provider", retryable: false, safeMessage: "应用连接服务尚未初始化。", allowedDetailKeys: [] },
   CONNECTOR_NOT_FOUND: { domain: "provider", retryable: false, safeMessage: "没有找到这项应用连接。", allowedDetailKeys: [] },

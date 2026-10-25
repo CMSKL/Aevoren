@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { ZodError } from "zod";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -65,15 +66,14 @@ afterEach(() => {
 });
 
 const call = (operation: string, input: object): ProductToolRequest => ({ kind: "product-call", action: "execute", operation, input });
-const operations = ["bots.create", "rooms.create", "teams.createContentTeam"] as const;
-const creationCases = operations.flatMap(operation => [false, true].map(explicitProject => ({ operation, explicitProject })));
+const operations = ["bots.create", "rooms.create"] as const;
+const creationCases = operations.map(operation => ({ operation }));
 
 describe("direct AI creation scope", () => {
-  it.each(creationCases)("creates $operation directly without directory grants (explicit project: $explicitProject)", async ({ operation, explicitProject }) => {
+  it.each(creationCases)("creates $operation directly without directory grants or public project selection", async ({ operation }) => {
     const f = await fixture(), beforeBots = new Set(f.repository.listBots().map(value => value.id));
     const beforeRooms = new Set(f.repository.listRooms().map(value => value.id));
-    const input = { ...(explicitProject ? { projectId: f.current.project.id } : {}),
-      ...(operation === "rooms.create" ? { memberBotIds: [f.actor.bot.id, f.sibling.bot.id], leadBotId: null } : {}) };
+    const input = { ...(operation === "rooms.create" ? { memberBotIds: [f.actor.bot.id, f.sibling.bot.id], leadBotId: null } : {}) };
     expect(f.repository.listSessionWorkspaces(f.actor.session.id, f.actor.bot.id).map(value => value.id)).toEqual([f.current.workspace.id]);
     expect(await f.request(call(operation, input))).toMatchObject({ ok: true });
     const bots = f.repository.listBots().filter(value => !beforeBots.has(value.id));
@@ -102,7 +102,8 @@ describe("direct AI creation scope", () => {
     let failure: unknown;
     try { const result = await f.request(call(operation, input)); if (!result.ok) failure = result.error; }
     catch (error) { failure = error; }
-    expect(failure).toMatchObject({ code: expect.any(String) });
+    expect(failure).toBeInstanceOf(ZodError);
+    expect((failure as ZodError).issues).toEqual(expect.arrayContaining([expect.objectContaining({ code: "unrecognized_keys", keys: ["projectId"] })]));
     expect(f.repository.listBots().map(value => value.id)).toEqual(botIds);
     expect(f.repository.listRooms().map(value => value.id)).toEqual(roomIds);
     expect(f.repository.listPendingApprovalRequests(f.actor.session.id)).toEqual([]);
@@ -128,7 +129,7 @@ describe("direct AI creation scope", () => {
     f.repository.prepareMessage({ sessionId: f.outsider.session.id, clientNonce: randomUUID(), text: privateText });
     expect(JSON.stringify(f.repository.listTranscript(f.outsider.session.id))).toContain(privateText);
     const memberBotIds = [f.actor.bot.id, f.outsider.bot.id];
-    const tool: ToolRequest = transport === "product" ? call("rooms.create", { projectId: f.current.project.id, memberBotIds, leadBotId: null })
+    const tool: ToolRequest = transport === "product" ? call("rooms.create", { memberBotIds, leadBotId: null })
       : { kind: "room-create", name: "Foreign members", description: "", memberBotIds };
     const result = await f.request(tool);
     expect(result).toMatchObject({ ok: true });
@@ -195,7 +196,7 @@ describe("direct AI creation scope", () => {
       expectedMembershipVersion: room.room.membershipVersion }))).toBe(true);
   });
 
-  it("preserves directory grants for explicit UI creation", async () => {
+  it("preserves historical directory grants in compatibility data without exposing setup operations", async () => {
     const f = await fixture(), bot = f.repository.createBot(f.current.project.id);
     const room = f.repository.createRoom({ projectId: f.current.project.id, memberBotIds: [f.actor.bot.id, f.sibling.bot.id] });
     const team = f.repository.createContentTeamTemplate(f.current.project.id);

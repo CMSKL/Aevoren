@@ -1,5 +1,5 @@
 import { openSettingsFromAccount, openComposerTools, selectDetailsTab, selectNavigationTab } from "./navigation";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
@@ -13,7 +13,7 @@ import { removeTestDirectory } from "./test-cleanup";
 // Browser plugin not available: use the repository's actual hidden Electron,
 // IPC and SQLite workflow. No fake provider, generated answer, tool evidence,
 // updater event or API response is used. Names and attachments are user inputs.
-type Fixture = { directory: string; databasePath: string; attachmentPath: string; workspacePath: string };
+type Fixture = { directory: string; databasePath: string; attachmentPath: string };
 type Contact = { bot: Bot; session: Session };
 
 function fixture(codexPath?: string): Fixture {
@@ -34,10 +34,7 @@ function fixture(codexPath?: string): Fixture {
   } finally { repository.close(); }
   const attachmentPath = join(directory, "联系人验收附件.md");
   writeFileSync(attachmentPath, "# 用户提供的验收附件\n用于检查联系人编辑不会丢失当前聊天附件。\n", "utf8");
-  const workspacePath = join(directory, "资料验收文件夹");
-  mkdirSync(workspacePath);
-  writeFileSync(join(workspacePath, "真实本地输入.md"), "# 用户的本地文件输入\n目录权限修改不得改变本文件。\n", "utf8");
-  return { directory, databasePath, attachmentPath, workspacePath };
+  return { directory, databasePath, attachmentPath };
 }
 
 async function launch(data: Fixture): Promise<{ application: ElectronApplication; page: Page }> {
@@ -52,7 +49,6 @@ async function launch(data: Fixture): Promise<{ application: ElectronApplication
       AEVOREN_BOT_TEST_HIDDEN: "1",
       AEVOREN_BOT_DISABLE_UPDATES: "1",
       AEVOREN_BOT_ATTACHMENT_TEST_PATHS: data.attachmentPath,
-      AEVOREN_BOT_WORKSPACE_TEST_PATH: data.workspacePath,
     },
   });
   const page = await application.firstWindow();
@@ -428,65 +424,6 @@ test("the installed Codex is detected and scanned through real IPC without chang
     await test.info().attach("actual-codex-scan.json", { body: JSON.stringify(scan, null, 2), contentType: "application/json" });
     writeFileSync(test.info().outputPath("actual-codex-scan.json"), `${JSON.stringify(scan, null, 2)}\n`, "utf8");
     await page.screenshot({ path: test.info().outputPath("actual-codex-contact.png") });
-  } finally {
-    if (application) await close(application);
-    removeTestDirectory(data.directory);
-  }
-});
-
-test("local folder management remains reachable and real session permissions work without a Bot details drawer", async () => {
-  const data = fixture();
-  let application: ElectronApplication | undefined;
-  try {
-    const launched = await launch(data);
-    application = launched.application;
-    const page = launched.page;
-    const [current, peer] = await createContacts(page);
-    const registration = await page.evaluate(async () => {
-      const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
-      const result = await api.workspaces.add();
-      if (!result.ok) throw new Error(result.error.safeMessage);
-      if (!result.data) throw new Error("Actual test folder registration was cancelled");
-      return result.data;
-    });
-    expect(registration.workspace.name).toBe("资料验收文件夹");
-    expect(registration.workspace.writeEnabled).toBe(false);
-    await page.reload();
-    await expect(page.locator(".app-shell")).toBeVisible();
-    await settings(page);
-    await page.locator(".settings-nav").getByRole("button", { name: "能力与权限", exact: true }).click();
-    await page.getByRole("button", { name: "打开管理", exact: true }).click();
-    await expect(page.locator(".sidebar-workspace")).toBeVisible();
-    await expect(page.locator(".sidebar-project-toggle").filter({ hasText: registration.project.name })).toBeVisible();
-    await expect(page.getByRole("tab", { name: "工作区", exact: true })).toHaveCount(0);
-    await selectNavigationTab(page, "聊天");
-    await page.locator('.sidebar [role="listitem"]').filter({ hasText: current!.bot.name }).click();
-    await page.getByRole("button", { name: "聊天选项", exact: true }).click();
-    await page.getByRole("menuitem", { name: "打开任务详情", exact: true }).click();
-    await page.getByRole("button", { name: "管理文件夹", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: "工作区权限", exact: true });
-    await expect(dialog.getByLabel("当前聊天工作区", { exact: true })).toBeVisible();
-    await dialog.getByLabel("当前聊天工作区", { exact: true }).selectOption(registration.project.id);
-    await expect(dialog.getByLabel("当前聊天工作区", { exact: true })).toHaveValue(registration.project.id);
-    await expect(dialog.getByLabel("允许 Bot 新建 Markdown/CSV", { exact: true })).not.toBeChecked();
-    await dialog.getByLabel("允许 Bot 新建 Markdown/CSV", { exact: true }).check();
-    await expect(dialog.getByLabel("允许 Bot 新建 Markdown/CSV", { exact: true })).toBeChecked();
-    const actualPermissions = await page.evaluate(async () => {
-      const result = await (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.workspaces.list();
-      if (!result.ok) throw new Error(result.error.safeMessage);
-      return result.data;
-    });
-    expect(actualPermissions.find(workspace => workspace.id === registration.workspace.id)?.writeEnabled).toBe(true);
-    const database = new DatabaseSync(data.databasePath, { readOnly: true });
-    try {
-      expect(database.prepare("SELECT workspace_id FROM session_workspace_grants WHERE session_id = ?").all(current!.session.id)).toEqual([{ workspace_id: registration.workspace.id }]);
-      expect(database.prepare("SELECT workspace_id FROM session_workspace_grants WHERE session_id = ?").all(peer!.session.id)).toEqual([]);
-    } finally { database.close(); }
-    expect(readFileSync(join(data.workspacePath, "真实本地输入.md"), "utf8")).toBe("# 用户的本地文件输入\n目录权限修改不得改变本文件。\n");
-    await page.screenshot({ path: test.info().outputPath("real-session-folder-permissions.png"), scale: "css" });
-    await dialog.getByRole("button", { name: "完成", exact: true }).click();
-    await expect(page.locator('.inspector[aria-label="Bot 设置"]')).toHaveCount(0);
-    await expect(page.getByLabel("消息", { exact: true })).toBeVisible();
   } finally {
     if (application) await close(application);
     removeTestDirectory(data.directory);

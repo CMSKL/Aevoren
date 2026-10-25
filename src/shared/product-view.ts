@@ -2,11 +2,11 @@ import type { ResourceReference } from "./library-contracts";
 import type { MessageMediaReference } from "./media-contracts";
 
 export type ProductViewInput = {
-  action: "open_chats" | "open_contacts" | "open_workspaces" | "open_settings" | "open_profile" | "open_bot" | "open_room" | "open_bot_profile" | "open_room_settings" | "task_details" | "sidebar_search" | "sidebar_expand" | "sidebar_select" | "model_search" | "draft_get" | "draft_update" | "choose_avatar" | "window_show" | "window_hide" | "app_exit" | "dismiss_update" | "draft_remove_attachment" | "draft_add_attachments" | "room_members" | "expand_record";
+  action: "open_chats" | "open_contacts" | "open_settings" | "open_profile" | "open_bot" | "open_room" | "open_bot_profile" | "open_room_settings" | "task_details" | "sidebar_search" | "sidebar_expand" | "sidebar_select" | "model_search" | "draft_get" | "draft_update" | "choose_avatar" | "window_show" | "window_hide" | "app_exit" | "dismiss_update" | "draft_remove_attachment" | "draft_add_attachments" | "room_members" | "expand_record";
   botId?: string; roomId?: string; sessionId?: string; query?: string; unreadOnly?: boolean;
   section?: "general" | "models" | "computer" | "capabilities" | "memory" | "mcp" | "apps" | "routines" | "updates";
-  tab?: "artifacts" | "records"; group?: "hidden" | "archived" | "workspaces" | "project" | "bot_group" | "room_group";
-  projectId?: string; expanded?: boolean; botIds?: string[]; roomIds?: string[];
+  tab?: "artifacts" | "records"; group?: "hidden" | "archived";
+  expanded?: boolean; botIds?: string[]; roomIds?: string[];
   attachmentId?: string; recordId?: string;
   text?: string; expectedDigest?: string; routingMode?: "automatic" | "explicit" | "everyone"; targetBotIds?: string[];
   resourceRefs?: ResourceReference[];

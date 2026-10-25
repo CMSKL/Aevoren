@@ -221,7 +221,6 @@ const api: AevorenBotApi = {
     bind: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.bind, input),
     unbind: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.unbind, input),
     pickImport: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.pickImport, input),
-    importPath: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.importPath, input),
     export: (input) => ipcRenderer.invoke(LIBRARY_CHANNELS.export, input),
     onChanged: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, value: LibraryChangedEvent): void => listener(value);
@@ -236,7 +235,6 @@ const api: AevorenBotApi = {
     read: input => ipcRenderer.invoke(MEDIA_CHANNELS.read, input),
     preview: input => ipcRenderer.invoke(MEDIA_CHANNELS.preview, input),
     pickImport: input => ipcRenderer.invoke(MEDIA_CHANNELS.pickImport, input),
-    importPath: input => ipcRenderer.invoke(MEDIA_CHANNELS.importPath, input),
     bind: input => ipcRenderer.invoke(MEDIA_CHANNELS.bind, input),
     unbind: input => ipcRenderer.invoke(MEDIA_CHANNELS.unbind, input),
     setEnabled: input => ipcRenderer.invoke(MEDIA_CHANNELS.setEnabled, input),
@@ -287,17 +285,11 @@ const api: AevorenBotApi = {
     setUnread: (input) => ipcRenderer.invoke(IPC.conversationsSetUnread, input),
     setHidden: (input) => ipcRenderer.invoke(IPC.conversationsSetHidden, input),
     clear: (sessionId) => ipcRenderer.invoke(IPC.conversationsClear, sessionId),
-    setProject: (input) => ipcRenderer.invoke(IPC.conversationsSetProject, input),
     deleteBatch: (input) => ipcRenderer.invoke(IPC.conversationsDeleteBatch, input),
-  },
-  teams: {
-    createContentTeam: (input) => input
-      ? ipcRenderer.invoke(IPC.teamsCreateContentTeam, input)
-      : ipcRenderer.invoke(IPC.teamsCreateContentTeam),
   },
   bots: {
     list: () => ipcRenderer.invoke(IPC.botsList),
-    create: (input) => input ? ipcRenderer.invoke(IPC.botsCreate, input) : ipcRenderer.invoke(IPC.botsCreate),
+    create: () => ipcRenderer.invoke(IPC.botsCreate),
     update: (input) => ipcRenderer.invoke(IPC.botsUpdate, input),
     setPinned: (input) => ipcRenderer.invoke(IPC.botsSetPinned, input),
     setUnread: (input) => ipcRenderer.invoke(IPC.botsSetUnread, input),
@@ -315,17 +307,6 @@ const api: AevorenBotApi = {
     listProposals: (input) => ipcRenderer.invoke(IPC.memoriesListProposals, input),
     acceptProposal: (input) => ipcRenderer.invoke(IPC.memoriesAcceptProposal, input),
     rejectProposal: (input) => ipcRenderer.invoke(IPC.memoriesRejectProposal, input),
-  },
-  workspaces: {
-    list: () => ipcRenderer.invoke(IPC.workspacesList),
-    add: (input) => ipcRenderer.invoke(IPC.workspacesAdd, input),
-    updatePermissions: (input) => ipcRenderer.invoke(IPC.workspacesUpdatePermissions, input),
-    reveal: (input) => ipcRenderer.invoke(IPC.workspacesReveal, input),
-    remove: (input) => ipcRenderer.invoke(IPC.workspacesRemove, input),
-  },
-  projects: {
-    list: () => ipcRenderer.invoke(IPC.projectsList),
-    create: (input) => ipcRenderer.invoke(IPC.projectsCreate, input),
   },
   tools: {
     list: (input) => ipcRenderer.invoke(IPC.toolsList, input),

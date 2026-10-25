@@ -39,7 +39,7 @@ describe("execution environment surfaces", () => {
   });
 
   it("uses the existing contact MAIN scope instead of creating an unrelated environment target", () => {
-    const props = { bot, rooms: [], busy: false, workspaceIds: [], onSend: async () => true, onBotUpdated: () => undefined, onAddToRoom: async () => true, onOpenModelSettings: () => undefined, onOpenBots: () => undefined };
+    const props = { bot, rooms: [], busy: false, onSend: async () => true, onBotUpdated: () => undefined, onAddToRoom: async () => true, onOpenModelSettings: () => undefined, onOpenBots: () => undefined };
     const noScope = renderToStaticMarkup(<ContactDetail {...props} />);
     expect(noScope).toContain('aria-controls="contact-bot-1-environment-panel"');
     expect(noScope).toContain("正在读取当前 Bot 的私聊执行范围");
@@ -53,7 +53,7 @@ describe("execution environment surfaces", () => {
     const detail: RoomDetail = { room: { id: "room-1", projectId: "project-1", name: "执行群", description: "", version: 1, membershipVersion: 1, archivedAt: null, pinnedAt: null, hiddenAt: null, hasUnread: false, createdAt: bot.createdAt, updatedAt: bot.updatedAt },
       members: [{ roomId: "room-1", botId: bot.id, position: 0, bot }, { roomId: "room-1", botId: second.id, position: 1, bot: second }],
       session: { id: "session-room", botId: null, roomId: "room-1", kind: "MAIN", generation: 1, createdAt: bot.createdAt, updatedAt: bot.updatedAt } };
-    const html = renderToStaticMarkup(<RoomInspector detail={detail} bots={[bot, second, { ...bot, id: "nonmember", name: "私聊成员" }]} conversationWorkspace={{ projects: [], projectId: null, pending: false, error: null, onChange: () => undefined }} active={false} mobileOpen={false} onDetailUpdated={() => undefined} onError={() => undefined} onOpenBot={() => undefined} onMobileClose={() => undefined} />);
+    const html = renderToStaticMarkup(<RoomInspector detail={detail} bots={[bot, second, { ...bot, id: "nonmember", name: "私聊成员" }]} active={false} mobileOpen={false} onDetailUpdated={() => undefined} onError={() => undefined} onOpenBot={() => undefined} onMobileClose={() => undefined} />);
     const selector = html.match(/<select aria-label="执行环境成员"[\s\S]*?<\/select>/)?.[0];
     expect(selector).toContain('value="bot-1"');
     expect(selector).toContain('value="bot-2"');

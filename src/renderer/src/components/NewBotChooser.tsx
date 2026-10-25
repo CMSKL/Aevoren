@@ -13,7 +13,6 @@ type NewBotChooserProps = {
   onClose(): void;
   onCreate(): void;
   onCreateRoom(botIds: string[], leadBotId?: string | null): void;
-  onCreateContentTeam(): void;
   onSelect(bot: Bot): void;
 };
 
@@ -25,7 +24,6 @@ export function NewBotChooser({
   onClose,
   onCreate,
   onCreateRoom,
-  onCreateContentTeam,
   onSelect,
 }: NewBotChooserProps): React.JSX.Element {
   const [query, setQuery] = useState("");
@@ -139,15 +137,6 @@ export function NewBotChooser({
           >
             <span className="recipient-option-icon"><RoomIcon /></span>
             <span className="recipient-option-copy"><strong>创建群聊</strong><small>选择 2～6 个现有 Bot</small></span>
-          </button> : null}
-          {!initialGroupMode ? <button
-            className="recipient-option"
-            type="button"
-            disabled={creating}
-            onClick={onCreateContentTeam}
-          >
-            <span className="recipient-option-icon"><RoomIcon /></span>
-            <span className="recipient-option-copy"><strong>一键创建内容团队</strong><small>创建研究、策划、写作、审校、复盘 5 个 Bot 与群聊</small></span>
           </button> : null}
           {initialGroupMode && visibleBots.length < 2 ? <div className="recipient-empty">至少需要 2 个联系人才能创建群聊。请先创建 Bot。</div> : null}
           {filteredBots.map((bot) => {

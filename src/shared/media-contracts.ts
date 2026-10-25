@@ -47,7 +47,6 @@ export type MediaApi = {
   read(input: MediaReadInput): Promise<ApiResult<MediaTextPage>>;
   preview(input: MediaPreviewInput): Promise<ApiResult<MediaPreview>>;
   pickImport(input: MediaScope): Promise<ApiResult<MediaImportResult | null>>;
-  importPath(input: MediaImportPathInput): Promise<ApiResult<MediaImportResult>>;
   bind(input: MediaBindingInput): Promise<ApiResult<MediaBinding>>;
   unbind(input: MediaBindingInput): Promise<ApiResult<boolean>>;
   setEnabled(input: MediaMutationInput & { enabled: boolean }): Promise<ApiResult<MediaAsset>>;

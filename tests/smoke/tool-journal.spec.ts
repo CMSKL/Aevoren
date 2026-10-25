@@ -1,12 +1,11 @@
 import { removeTestDirectory } from "./test-cleanup";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { _electron as electron, expect, test, type ElectronApplication } from "@playwright/test";
 import type { AevorenBotApi, PromptManifest } from "@shared/contracts";
 import { AppRepository } from "../../src/main/database";
-import { WorkspaceService } from "../../src/main/workspace-service";
 
 function createRunningRuntime(repository: AppRepository, name: string, projectId?: string) {
   const created = repository.createBot(projectId);
@@ -36,20 +35,17 @@ test("scopes Approval IPC and blocks detached allow after a process boundary", a
   const userDataDir = mkdtempSync(join(tmpdir(), "aevoren-tool-ipc-"));
   const databasePath = join(userDataDir, "aevoren-bot.sqlite");
   const repository = new AppRepository(databasePath);
-  const workspaceRoot = join(userDataDir, "审批夹具");
-  mkdirSync(join(workspaceRoot, "docs"), { recursive: true });
-  const registered = await new WorkspaceService(repository).registerRoot(workspaceRoot);
-  const first = createRunningRuntime(repository, "审批 Bot A", registered.project.id);
+  const first = createRunningRuntime(repository, "审批 Bot A");
   const second = createRunningRuntime(repository, "审批 Bot B");
   const prepared = repository.prepareToolInvocation({
     runtimeRunId: first.runtime.id,
     toolCallId: "ipc-tool-call",
     idempotencyKey: crypto.randomUUID(),
     tool: {
-      kind: "workspace-list",
-      workspaceId: registered.workspace.id,
-      path: "docs",
-      maxEntries: 20,
+      kind: "product-call",
+      action: "execute",
+      operation: "settings.saveGeneral",
+      input: { launchAtLogin: true },
     },
   });
   repository.close();

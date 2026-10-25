@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
-import type { AppError, Bot, BotPatch, McpServerInfo, ModelSelection, ProviderInstanceInfo, Workspace } from "@shared/contracts";
-import { ChevronDownIcon, DocumentIcon, SettingsIcon, WorkspaceIcon } from "./Icons";
+import type { AppError, Bot, BotPatch, McpServerInfo, ModelSelection, ProviderInstanceInfo } from "@shared/contracts";
+import { ChevronDownIcon, DocumentIcon, SettingsIcon } from "./Icons";
 import { MemoryPanel, type MemoryPanelHandle } from "./MemoryPanel";
 import { ProviderStatusPill } from "./ProviderPresentation";
 
@@ -14,7 +14,6 @@ export type ProfileInspectorHandle = {
 
 type ProfileInspectorProps = {
   bot: Bot | null;
-  workspaceIds: string[];
   activeTab: "profile" | "models" | "memory";
   editing: boolean;
   onBotUpdated(bot: Bot): void;
@@ -42,18 +41,15 @@ function sameDraft(left: ProfileDraft, right: ProfileDraft): boolean {
 }
 
 export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspectorProps>(function ProfileInspector(
-  { bot, workspaceIds, activeTab, editing, onBotUpdated, onError, onSaveStatusChange, onOpenModelSettings },
+  { bot, activeTab, editing, onBotUpdated, onError, onSaveStatusChange, onOpenModelSettings },
   ref,
 ) {
   const [draft, setDraft] = useState<ProfileDraft | null>(bot ? toDraft(bot) : null);
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [providers, setProviders] = useState<ProviderInstanceInfo[]>([]);
   const [mcpServers, setMcpServers] = useState<McpServerInfo[]>([]);
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const fileWorkspaces = workspaces.filter((workspace) => workspaceIds.includes(workspace.id));
   const [modelSaving, setModelSaving] = useState(false);
   const [mcpSaving, setMcpSaving] = useState(false);
-  const [memoryScopeSaving, setMemoryScopeSaving] = useState(false);
   const [modelDraft, setModelDraft] = useState(bot?.modelSelection.modelId ?? "");
   const [providerLoading, setProviderLoading] = useState(true);
   const [providerChecking, setProviderChecking] = useState(false);
@@ -113,7 +109,6 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
     if (!bot?.id) {
       setProviders([]);
       setMcpServers([]);
-      setWorkspaces([]);
       return;
     }
     const loadProviders = (): void => {
@@ -142,29 +137,15 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
         onError({ code: "CONTACT_TOOL_READ_FAILED", domain: "tool", retryable: true, safeMessage: "工具范围暂时无法读取，请稍后重试。" });
       });
     };
-    const loadWorkspaces = (): void => {
-      void window.aevorenBot.workspaces.list().then((result) => {
-        if (!active) return;
-        if (result.ok) setWorkspaces(result.data);
-        else onError(result.error);
-      }).catch((error: unknown) => {
-        if (!active) return;
-        console.warn("Contact memory scope list failed", error);
-        onError({ code: "CONTACT_MEMORY_SCOPE_FAILED", domain: "memory", retryable: true, safeMessage: "记忆范围暂时无法读取，请稍后重试。" });
-      });
-    };
     loadProviders();
     loadMcp();
-    loadWorkspaces();
     window.addEventListener("aevoren:providers-changed", loadProviders);
     window.addEventListener("aevoren:mcp-changed", loadMcp);
-    window.addEventListener("aevoren:workspaces-changed", loadWorkspaces);
     return () => {
       active = false;
       if (timerRef.current) clearTimeout(timerRef.current);
       window.removeEventListener("aevoren:providers-changed", loadProviders);
       window.removeEventListener("aevoren:mcp-changed", loadMcp);
-      window.removeEventListener("aevoren:workspaces-changed", loadWorkspaces);
     };
   }, [bot?.id, onError]);
 
@@ -256,7 +237,6 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
     }
     setModelSaving(true);
     setMcpSaving(true);
-    setMemoryScopeSaving(true);
     setStatus("saving");
     onError(null);
     const operation = window.aevorenBot.bots.update({
@@ -292,7 +272,6 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
       savePromiseRef.current = null;
       setModelSaving(false);
       setMcpSaving(false);
-      setMemoryScopeSaving(false);
     }
   }
 
@@ -304,11 +283,6 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
   async function updateMcpSelection(mcpServerIds: string[] | null): Promise<void> {
     if (mcpSaving) return;
     await savePatch({ mcpServerIds });
-  }
-
-  async function updateMemoryWorkspaceSelection(memoryWorkspaceIds: string[]): Promise<void> {
-    if (memoryScopeSaving) return;
-    await savePatch({ memoryWorkspaceIds });
   }
 
   async function checkProvider(): Promise<void> {
@@ -389,7 +363,7 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
           <button type="button" className="secondary-button" onClick={onOpenModelSettings}><SettingsIcon />管理模型连接</button>
         </div>
         <details className="contact-section-disclosure">
-          <summary><WorkspaceIcon /><strong>工具范围</strong><span>配置这位 Bot 可使用的 MCP 服务</span><ChevronDownIcon className="contact-disclosure-chevron" /></summary>
+          <summary><SettingsIcon /><strong>工具范围</strong><span>配置这位 Bot 可使用的 MCP 服务</span><ChevronDownIcon className="contact-disclosure-chevron" /></summary>
           <label className="field">
             <span>外部工具（MCP）</span>
             <select aria-label="MCP 访问范围" value={bot.mcpServerIds == null ? "all" : "custom"} disabled={mcpSaving} onChange={(event) => void updateMcpSelection(event.target.value === "all" ? null : mcpServers.filter((server) => server.enabled).map((server) => server.id))}>
@@ -401,19 +375,10 @@ export const ProfileInspector = forwardRef<ProfileInspectorHandle, ProfileInspec
             const checked = bot.mcpServerIds?.includes(server.id) ?? false;
             return <label key={server.id}><input type="checkbox" checked={checked} disabled={mcpSaving || !server.enabled && !checked} onChange={() => void updateMcpSelection(checked ? (bot.mcpServerIds ?? []).filter((id) => id !== server.id) : [...(bot.mcpServerIds ?? []), server.id])} /><span>{server.name}</span><small>{server.enabled ? server.status : "未启用"}</small></label>;
           })}</div> : null}
-          <p className="contact-editor-note">文件访问仍由各会话的目录授权决定，不会因修改 Bot 资料而改变。{fileWorkspaces.length > 0 ? `当前会话已授权：${fileWorkspaces.map((workspace) => workspace.name).join("、")}` : ""}</p>
         </details>
       </div>
       <div id={`contact-${bot.id}-memory-panel`} role="tabpanel" aria-labelledby={`contact-${bot.id}-memory-tab`} hidden={activeTab !== "memory"} className="contact-tab-panel">
         {activeTab === "memory" ? <MemoryPanel ref={memoryPanelRef} botId={bot.id} onError={onError} /> : null}
-        <details className="contact-section-disclosure">
-          <summary><WorkspaceIcon /><strong>文件夹记忆范围</strong><ChevronDownIcon className="contact-disclosure-chevron" /></summary>
-          <p className="contact-editor-note">只把明确绑定的长期状态加入模型上下文；不等同于文件访问授权。</p>
-          <div className="mcp-access-list">{workspaces.length === 0 ? <small>尚未绑定文件夹记忆</small> : workspaces.map((workspace) => {
-            const selected = (bot.memoryWorkspaceIds ?? []).includes(workspace.id);
-            return <label key={workspace.id}><input type="checkbox" checked={selected} disabled={memoryScopeSaving} onChange={() => void updateMemoryWorkspaceSelection(selected ? (bot.memoryWorkspaceIds ?? []).filter((id) => id !== workspace.id) : [...(bot.memoryWorkspaceIds ?? []), workspace.id])} /><span>{workspace.name}</span><small>{selected ? "已注入" : "未注入"}</small></label>;
-          })}</div>
-        </details>
       </div>
       {status === "failed" ? <button className="secondary-button" type="button" onClick={() => void flush()}>重试保存</button> : null}
     </section>

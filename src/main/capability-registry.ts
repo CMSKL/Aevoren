@@ -60,15 +60,8 @@ function selectedModel(selection: ModelSelection, provider: ProviderInstanceInfo
 }
 
 function capabilityDescriptors(
-  workspaces: Array<{ writeEnabled: boolean }>,
   context: SnapshotContext,
 ): CapabilityDescriptor[] {
-  const workspaceAvailable = workspaces.length > 0 && context.providerCapabilities?.workspaceTools === true;
-  const workspaceReason = workspaces.length === 0
-    ? "尚未授权工作区。"
-    : context.providerCapabilities?.workspaceTools === true
-      ? null
-      : "当前模型来源未声明 Workspace 工具能力。";
   const networkAvailable = context.providerCapabilities?.networkTools === true;
   const networkReason = networkAvailable ? null : "当前模型来源未声明结构化联网工具能力。";
   const handoffAvailable = context.providerCapabilities?.handoff === true;
@@ -77,7 +70,7 @@ function capabilityDescriptors(
   return [
     {
       id: "product.operations", name: "产品操作", category: "conversation",
-      description: "查询完整产品动作目录，按统一授权调用设置、Bot、群聊、消息、任务、Memory、MCP、模型连接、项目、文件与更新。",
+      description: "查询完整产品动作目录，按统一授权调用设置、Bot、群聊、消息、任务、Memory、MCP、模型连接与更新。",
       effectClass: "write-reversible", adapterKind: "core",
       availability: context.providerCapabilities?.workspaceTools || context.providerCapabilities?.networkTools ? "available" : "unavailable",
       reason: context.providerCapabilities?.workspaceTools || context.providerCapabilities?.networkTools ? null : "当前模型来源尚未接入宿主产品工具。",
@@ -85,9 +78,9 @@ function capabilityDescriptors(
     },
     {
       id: "project.provisioning",
-      name: "项目内 Bot 与群聊创建",
+      name: "Bot 与群聊创建",
       category: "conversation",
-      description: "查看当前项目真实成员，按用户要求直接创建 Bot 和群聊；新资源不会自动执行任务，也不能跨项目创建。",
+      description: "查看真实联系人，按用户要求创建 Bot 和群聊；新资源不会自动执行任务，也不会获得本地目录访问权限。",
       effectClass: "write-reversible",
       adapterKind: "core",
       availability: context.providerCapabilities?.workspaceTools === true || context.providerCapabilities?.networkTools === true ? "available" : "unavailable",
@@ -209,7 +202,7 @@ function capabilityDescriptors(
       id: "memory.manual",
       name: "显式长期记忆",
       category: "memory",
-      description: "用户管理并审批的 user / Bot / Workspace 长期 Memory。",
+      description: "用户管理并审批的用户全局与 Bot 专属长期记忆。",
       effectClass: "read-local",
       adapterKind: "local",
       availability: "available",
@@ -228,32 +221,6 @@ function capabilityDescriptors(
       reason: context.providerCapabilities?.workspaceTools === true || context.providerCapabilities?.networkTools === true ? null : "当前模型来源不支持结构化工具。",
       permissionState: "not-required",
       toolNames: context.providerCapabilities?.workspaceTools === true || context.providerCapabilities?.networkTools === true ? ["text_measure"] : [],
-    },
-    {
-      id: "workspace.read",
-      name: "Workspace 只读访问",
-      category: "workspace",
-      description: "在用户授权目录内列出、读取和搜索文本文件。",
-      effectClass: "read-local",
-      adapterKind: "local",
-      availability: workspaceAvailable ? "available" : workspaces.length === 0 ? "permission-required" : "unavailable",
-      reason: workspaceReason,
-      permissionState: workspaces.length > 0 ? "granted" : "not-granted",
-      toolNames: workspaceAvailable ? ["workspace_list", "workspace_read", "workspace_search"] : [],
-    },
-    {
-      id: "workspace.write",
-      name: "Workspace 文本成果写入",
-      category: "workspace",
-      description: "在单独授权的 Workspace 内创建新 Markdown/CSV；不覆盖、不删除。",
-      effectClass: "write-reversible",
-      adapterKind: "local",
-      availability: workspaceAvailable && workspaces.some((workspace) => workspace.writeEnabled)
-        ? "available"
-        : workspaces.length === 0 ? "permission-required" : "unavailable",
-      reason: workspaces.some((workspace) => workspace.writeEnabled) ? workspaceReason : "尚未为任何 Workspace 启用写入。",
-      permissionState: workspaces.some((workspace) => workspace.writeEnabled) ? "granted" : "not-granted",
-      toolNames: workspaceAvailable && workspaces.some((workspace) => workspace.writeEnabled) ? ["workspace_write"] : [],
     },
     {
       id: "network.search",
@@ -392,9 +359,7 @@ export class CapabilityRegistry {
     botId?: string,
     sessionId?: string,
   ): CapabilitySnapshot {
-    const workspaces = botId
-      ? this.repository.listSessionWorkspaces(sessionId ?? this.repository.getMainSession(botId).id, botId)
-      : this.repository.listWorkspaces();
+    if (botId && sessionId) this.repository.assertSessionExecutor(sessionId, botId);
     const providerCapabilities: ProviderCapabilities | null = (() => {
       try {
         return this.providers.getCapabilities(selection);
@@ -421,7 +386,7 @@ export class CapabilityRegistry {
       try { this.repository.outbound.assertGrant({ sessionId, executorBotId: botId }, grant.id, grant.version); return true; }
       catch { return false; }
     }));
-    const capabilities = capabilityDescriptors(workspaces, { selection, provider, providerCapabilities, room, mcpTools, mcpScopedReady, routines, executionReady, scriptReady: executionReady && environment.workerVersion === SKILL_SCRIPT_WORKER_VERSION, nativeReadReady, nativeWriteReady,
+    const capabilities = capabilityDescriptors({ selection, provider, providerCapabilities, room, mcpTools, mcpScopedReady, routines, executionReady, scriptReady: executionReady && environment.workerVersion === SKILL_SCRIPT_WORKER_VERSION, nativeReadReady, nativeWriteReady,
       browserReady: browser?.state === "running", browserUserControlled: Boolean(botId && sessionId && this.repository.browsers.view({ sessionId, executorBotId: botId })?.owner === "user") }).map((capability) => {
       if (!providerCapabilities?.supportedToolNames || capability.toolNames.length === 0) return capability;
       const toolNames = capability.toolNames.filter((name) => providerCapabilities.supportedToolNames!.includes(name));
@@ -433,20 +398,6 @@ export class CapabilityRegistry {
       };
     });
     const permissions: CapabilityPermission[] = [{
-      id: "workspace.read",
-      name: "Workspace 只读访问",
-      state: workspaces.length > 0 ? "granted" : "not-granted",
-      scopeSummary: workspaces.length > 0 ? `${workspaces.length} 个已授权文件夹` : "尚未授权文件夹",
-      revocable: true,
-    }, {
-      id: "workspace.write",
-      name: "Workspace 文本成果写入",
-      state: workspaces.some((workspace) => workspace.writeEnabled) ? "granted" : "not-granted",
-      scopeSummary: workspaces.some((workspace) => workspace.writeEnabled)
-        ? `${workspaces.filter((workspace) => workspace.writeEnabled).length} 个可写 Workspace`
-        : "尚未启用",
-      revocable: true,
-    }, {
       id: "mcp.read",
       name: "MCP 只读工具",
       state: mcpTools.length > 0 ? "granted" : "not-granted",
@@ -462,7 +413,7 @@ export class CapabilityRegistry {
       capabilities,
       permissions,
       connections: [...providerList.map(connection), ...mcpServers.map(mcpConnection)],
-      workspaceCount: workspaces.length,
+      workspaceCount: 0,
       backgroundMode: routines.some((routine) => routine.enabled) ? "background-while-routines-enabled" : "foreground-only",
     };
   }

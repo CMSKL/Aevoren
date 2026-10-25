@@ -14,7 +14,6 @@
 
 .settings-dialog > header,
 .settings-dialog > footer,
-.workspace-dialog-footer,
 .user-profile-footer {
   display: flex;
   align-items: flex-start;
@@ -101,7 +100,6 @@
 .settings-row :is(select, input:not([type="checkbox"])) { width: min(180px, 42%); min-width: 0; }
 .settings-field-row > :is(input, select) { width: 100%; min-width: 0; max-width: 100%; }
 .settings-row input[type="checkbox"],
-.workspace-permission-toggle input,
 .mcp-tool-trust input[type="checkbox"],
 .mcp-access-list input { flex: 0 0 18px; width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
 .settings-dialog :is(select, input, textarea),
@@ -332,7 +330,6 @@
 .room-add-member { display: flex; gap: 8px; padding-top: 16px; }
 .room-add-member select { flex: 1; width: 0; min-width: 0; }
 .room-lock-note { margin: 12px 0 0; color: var(--text-muted); font-size: var(--font-small); line-height: 1.6; }
-.conversation-workspace { margin-top: 24px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
 .field-help { margin: 8px 0 0; color: var(--text-muted); font-size: var(--font-small); line-height: 1.6; }
 
 /* Contact details stay aligned to the workbench rather than a centered poster. */
@@ -352,7 +349,7 @@
 .contact-detail-notice { min-height: 22px; margin: 0; }
 .contact-detail-empty { padding: 24px 0; }
 
-/* Creation, profile and workspace dialogs retain their own scrolling region. */
+/* Creation and profile dialogs retain their own scrolling region. */
 .new-bot-backdrop,
 .bot-delete-backdrop { position: fixed; z-index: 200; inset: 0; display: grid; place-items: center; padding: 24px; background: color-mix(in srgb, var(--app-bg) 78%, transparent); backdrop-filter: blur(3px); }
 .new-bot-chooser { display: flex; flex-direction: column; width: min(560px, 100%); max-height: min(720px, calc(100dvh - 48px)); overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); color: var(--text); background: var(--panel-bg); box-shadow: var(--shadow-dialog); }
@@ -389,19 +386,6 @@
 .user-profile-name { font-size: 14px; font-weight: 550; }
 .user-profile-form > input { width: 100%; }
 .user-profile-footer { justify-content: flex-end; margin-top: 12px; }
-.workspace-list { margin: 20px 0; }
-.workspace-row { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: start; gap: 12px; }
-.workspace-icon { display: grid; place-items: center; width: 32px; height: 32px; color: var(--text-muted); }
-.workspace-icon svg { width: 24px; height: 24px; }
-.workspace-copy { min-width: 0; }
-.workspace-copy > strong,
-.workspace-copy > span { display: block; overflow-wrap: anywhere; }
-.workspace-copy > strong { font-size: 15px; font-weight: 600; }
-.workspace-copy > span { margin-top: 6px; color: var(--text-muted); font-size: var(--font-small); line-height: 1.6; }
-.workspace-permission-toggle { display: flex; align-items: flex-start; gap: 8px; margin-top: 12px; font-size: var(--font-small); line-height: 1.6; }
-.workspace-permission-toggle input { margin-top: 2px; }
-.workspace-dialog-footer { justify-content: flex-end; margin-top: 24px; }
-
 /* Anchored menus keep the coordinates provided by the keyboard/mouse handlers. */
 .bot-context-menu { position: fixed; z-index: 240; width: 218px; max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); overflow-y: auto; padding: 4px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text); background: var(--panel-bg); box-shadow: var(--shadow-dialog); }
 .bot-context-section + .bot-context-section { margin-top: 3px; padding-top: 3px; border-top: 1px solid var(--border); }
@@ -478,8 +462,6 @@
   .recipient-footer { padding: 16px; }
   .user-profile-dialog { width: calc(100vw - 32px); }
   .user-profile-avatar { grid-template-columns: 96px minmax(0, 1fr); gap: 16px; }
-  .workspace-row { grid-template-columns: 32px minmax(0, 1fr); }
-  .workspace-row > button { grid-column: 2; justify-self: start; }
   .bot-delete-dialog { max-height: calc(100dvh - 32px); padding: 20px; }
 }
 
@@ -490,6 +472,3 @@
 .settings-autosave-note { display: flex; align-items: center; gap: 8px; margin: 26px 0; color: var(--text-muted); font-size: 13px; }
 .settings-autosave-note svg { width: 18px; height: 18px; color: var(--success); }
 .settings-profile-note { margin: 24px 0 0; padding: 22px 0; border-top: 1px solid var(--border); color: var(--text-muted); font-size: 13px; line-height: 1.7; }
-.settings-legacy-management { margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--border); }
-.settings-legacy-management h3 { margin: 0 0 8px; }
-.settings-legacy-management p { margin: 0 0 14px; color: var(--text-muted); font-size: 13px; }

@@ -309,7 +309,7 @@ describe("Session scope repository", () => {
     expect(value.addRoomMember(group.room.id, bots[3]!.bot.id, group.room.membershipVersion).members).toHaveLength(4);
   });
 
-  it("isolates Bot memories and proposal deduplication by source session and intersects workspace subscriptions with grants", () => {
+  it("isolates Bot memories by session while preserving retired directory memories outside runtime context", () => {
     const value = repository();
     const a = workspace(value, "A");
     const b = workspace(value, "B");
@@ -323,9 +323,11 @@ describe("Session scope repository", () => {
     const sharedUser = value.createScopedMemory({ scope: "user", scopeKey: "user" }, "Global preference");
     const memoryA = value.createScopedMemory({ scope: "workspace", scopeKey: a.workspace.id }, "A note");
     const memoryB = value.createScopedMemory({ scope: "workspace", scopeKey: b.workspace.id }, "B note");
-    expect(value.listRuntimeMemories(first.bot.id).map((item) => item.id).toSorted()).toEqual([manual.id, sharedUser.id, memoryA.id].toSorted());
-    expect(value.listRuntimeMemories(first.bot.id, groupA.session.id).map((item) => item.id).toSorted()).toEqual([captured.id, sharedUser.id, memoryA.id].toSorted());
-    expect(value.listRuntimeMemories(first.bot.id, groupB.session.id).map((item) => item.id).toSorted()).toEqual([sharedUser.id, memoryB.id].toSorted());
+    expect(value.listRuntimeMemories(first.bot.id).map((item) => item.id).toSorted()).toEqual([manual.id, sharedUser.id].toSorted());
+    expect(value.listRuntimeMemories(first.bot.id, groupA.session.id).map((item) => item.id).toSorted()).toEqual([captured.id, sharedUser.id].toSorted());
+    expect(value.listRuntimeMemories(first.bot.id, groupB.session.id).map((item) => item.id).toSorted()).toEqual([sharedUser.id].toSorted());
+    expect(value.getMemory(memoryA.id).content).toBe("A note");
+    expect(value.getMemory(memoryB.id).content).toBe("B note");
     const pa = proposal(value, first.bot.id, groupA.session.id, "Same preference");
     expect(proposal(value, first.bot.id, groupA.session.id, "Same preference").id).toBe(pa.id);
     const pb = proposal(value, first.bot.id, groupB.session.id, "Same preference");

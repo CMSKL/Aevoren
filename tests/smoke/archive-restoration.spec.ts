@@ -7,7 +7,7 @@ import { _electron as electron, expect, test, type ElectronApplication, type Pag
 import type { AevorenBotApi, PromptManifest } from "../../src/shared/contracts";
 import { AppRepository } from "../../src/main/database";
 import { removeTestDirectory } from "./test-cleanup";
-import { openSettingsFromAccount, openComposerTools, openBotList, openInspector, openWorkspaceTab, selectNavigationTab } from "./navigation";
+import { openSettingsFromAccount, openComposerTools, openBotList, openInspector, openChatsTab, selectNavigationTab } from "./navigation";
 
 // Browser plugin not available. Exercise the real isolated Electron/SQLite/IPC
 // paths, without a fake provider or any model request. The persisted user inputs
@@ -92,18 +92,19 @@ function archiveRow(page: Page, id: string) { return page.getByTestId(`archive-r
 function archiveFeedback(page: Page, id: string) { return page.getByTestId(`archive-feedback-${id}`); }
 
 async function openArchive(page: Page, count?: number): Promise<void> {
-  await openWorkspaceTab(page);
+  await openChatsTab(page);
   const section = archiveSection(page);
   await expect(section).toBeVisible();
   const toggle = section.getByRole("button", { name: count === undefined ? /^已归档 \(\d+\)$/u : `已归档 (${count})`, exact: count !== undefined });
   if (await toggle.getAttribute("aria-expanded") === "false") await toggle.click();
 }
 
-async function assertNoChatArchive(page: Page, excludeArchivedName = true): Promise<void> {
-  await selectNavigationTab(page, "聊天");
+async function assertNoContactArchive(page: Page, excludeArchivedName = true): Promise<void> {
+  await selectNavigationTab(page, "联系人");
   await expect(page.getByRole("button", { name: /^已归档/u })).toHaveCount(0);
   await expect(archiveSection(page)).toHaveCount(0);
   if (excludeArchivedName) await expect(page.locator(".sidebar-list")).not.toContainText("未关联归档群聊");
+  await selectNavigationTab(page, "聊天");
 }
 
 function execute(path: string, sql: string): void {
@@ -127,30 +128,24 @@ function inspect(path: string, sessionId: string, roomId: string) {
   } finally { database.close(); }
 }
 
-test("P0 exposes every archived Room only in the global Workspace area, independently of project folding and restart", async () => {
+test("P0 exposes every archived Room only in the global Chats area, independently of old project associations and restart", async () => {
   const fixture = seed();
   let application: ElectronApplication | undefined;
   try {
     let launched = await launch(fixture);
     application = launched.application;
     let page = launched.page;
-    await assertNoChatArchive(page);
+    await assertNoContactArchive(page);
     await openArchive(page, fixture.rooms.length);
     for (const detail of fixture.rooms) await expect(archiveRow(page, detail.room.id)).toContainText(detail.room.name);
     await expect(page.getByRole("button", { name: /^已归档/u })).toHaveCount(1);
-    for (const project of await page.locator(".sidebar-project-toggle").all()) {
-      if (await project.getAttribute("aria-expanded") === "true") await project.click();
-    }
-    for (const detail of fixture.rooms) await expect(archiveRow(page, detail.room.id)).toBeVisible();
-    const projectsToggle = page.getByRole("button", { name: "项目", exact: true });
-    if (await projectsToggle.getAttribute("aria-expanded") === "true") await projectsToggle.click();
-    for (const detail of fixture.rooms) await expect(archiveRow(page, detail.room.id)).toBeVisible();
+    await expect(page.locator(".sidebar-project-toggle")).toHaveCount(0);
     await application.close();
     application = undefined;
     launched = await launch(fixture);
     application = launched.application;
     page = launched.page;
-    await assertNoChatArchive(page);
+    await assertNoContactArchive(page);
     await openArchive(page, fixture.rooms.length);
     for (const detail of fixture.rooms) await expect(archiveRow(page, detail.room.id)).toBeVisible();
     expect(inspect(fixture.path, fixture.globalRoom.session.id, fixture.globalRoom.room.id).conversation).toMatchObject({ project_id: null });
@@ -217,7 +212,7 @@ test("restoring preserves the current view, draft, attachment, unread state and 
       await expect(archiveFeedback(page, detail.room.id)).toContainText("已恢复到聊天列表");
       await expect(archiveFeedback(page, detail.room.id).getByRole("button", { name: "打开", exact: true })).toBeEnabled();
       await expect(page.getByRole("heading", { name: "当前对话", exact: true, level: 1 })).toBeVisible();
-      await expect(page.locator(".sidebar-workspace")).toBeVisible();
+      await expect(page.locator('.sidebar-list[aria-label="聊天"]')).toBeVisible();
       await expect(page.getByLabel("消息", { exact: true })).toHaveValue(draft);
       await expect(page.getByRole("button", { name: /移除附件 归档验收附件\.md/u })).toBeVisible();
       expect(await page.evaluate(() => sessionStorage.getItem("aevoren-bot:selected"))).toBe(selectionBefore);
@@ -280,7 +275,7 @@ test("restoring preserves the current view, draft, attachment, unread state and 
     application = undefined;
     const restarted = await launch(fixture, null);
     application = restarted.application;
-    await assertNoChatArchive(restarted.page, false);
+    await assertNoContactArchive(restarted.page, false);
     await expect(restarted.page.locator(`.bot-row[aria-label="${fixture.globalRoom.room.name}"]`)).toBeVisible();
   } finally {
     if (application) await closeApplication(application);
@@ -525,6 +520,8 @@ test("real detached and legacy Rooms remain recoverable, and a corrupt historica
   const repository = new AppRepository(fixture.path);
   const legacy = repository.createRoom({ name: "旧版无会话元数据群聊", memberBotIds: fixture.globalRoom.members.map(member => member.botId) });
   repository.archiveRoom(legacy.room.id, true);
+  const oldConversation = repository.getConversation(fixture.projectRoom.session.id);
+  repository.setConversationProject(oldConversation.sessionId, null, oldConversation.version);
   repository.close();
   const database = new DatabaseSync(fixture.path);
   try {
@@ -538,15 +535,8 @@ test("real detached and legacy Rooms remain recoverable, and a corrupt historica
     const launched = await launch(fixture);
     application = launched.application;
     const page = launched.page;
-    const detached = await page.evaluate(async sessionId => {
-      const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
-      const summaries = await api.conversations.list();
-      if (!summaries.ok) throw new Error(summaries.error.safeMessage);
-      const summary = summaries.data.find(item => item.sessionId === sessionId);
-      if (!summary) throw new Error("The real Room conversation was not loaded");
-      return api.conversations.setProject({ sessionId, projectId: null, expectedVersion: summary.version });
-    }, fixture.projectRoom.session.id);
-    expect(detached).toMatchObject({ ok: true, data: { projectId: null, workspaceIds: [] } });
+    const detached = await page.evaluate(() => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.conversations.list());
+    expect(detached.ok && detached.data.find(item => item.sessionId === fixture.projectRoom.session.id)).toMatchObject({ projectId: null, workspaceIds: [] });
     const scopeBefore = inspect(fixture.path, fixture.projectRoom.session.id, fixture.projectRoom.room.id);
     expect(scopeBefore.grants).toEqual([]);
     await page.reload();

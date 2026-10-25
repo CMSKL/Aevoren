@@ -1,5 +1,5 @@
 import { MEDIA_PRODUCT_OPERATIONS } from "@shared/media-product";
-import { mediaAvailableSchema, mediaIdSchema, mediaImportPathSchema, mediaListSchema, mediaMutationSchema, mediaPreviewSchema, mediaReadSchema, mediaScopeSchema, mediaSetEnabledSchema } from "@shared/media-schemas";
+import { mediaAvailableSchema, mediaIdSchema, mediaListSchema, mediaMutationSchema, mediaPreviewSchema, mediaReadSchema, mediaScopeSchema, mediaSetEnabledSchema } from "@shared/media-schemas";
 import type { MediaScope } from "@shared/media-contracts";
 import type { LibraryExecutionContext } from "./library-product-handlers";
 import type { MediaExecutionContext, MediaService } from "./media-service";
@@ -36,10 +36,6 @@ export function addMediaProductHandlers(handlers: Map<string, (input?: unknown) 
         context?.signal?.throwIfAborted();
         if (!paths?.length) return null;
         const prepared = await service.prepareImportPaths(scope.sessionId, paths, execution);
-        return commit(() => service.commitImport(prepared, execution));
-      }
-      case "media.importPath": {
-        const prepared = await service.prepareImportPath(mediaImportPathSchema.parse(scoped), execution);
         return commit(() => service.commitImport(prepared, execution));
       }
       case "media.bind": return commit(() => service.bind(mediaIdSchema.parse(scoped), execution));

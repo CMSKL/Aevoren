@@ -26,7 +26,7 @@ const PUBLIC_READS = new Set([
   "environments.probe", "environments.list", "environments.get", "execution.list", "execution.get", "execution.logs", "execution.wait", "execution.listFiles", "execution.readFile", "processes.list", "processes.listPorts",
   "applications.list", "library.list", "library.read", "library.readFile", "library.versions", "documents.list", "documents.search", "documents.read", "documents.versions", "skills.list", "skills.read", "skills.load", "skills.readFile",
   "userProfile.get", "settings.getGeneral", "providers.list", "bots.list", "rooms.list",
-  "tasks.getResult", "tasks.waitResult", "tasks.getRoomResult", "tasks.waitRoomResult", "projects.list", "workspaces.list", "updates.getState", "sessions.getMain", "capabilities.getSnapshot",
+  "tasks.getResult", "tasks.waitResult", "tasks.getRoomResult", "tasks.waitRoomResult", "updates.getState", "sessions.getMain", "capabilities.getSnapshot",
 ]);
 /** Routine work stays in the existing session/permission boundary; setup and external effects remain gated. */
 const DIRECT_OPERATIONS = new Set([
@@ -38,9 +38,9 @@ const DIRECT_OPERATIONS = new Set([
   "computer.focusWindow", "computer.move", "computer.mouseDown", "computer.mouseUp", "computer.drag",
   "computer.click", "computer.type", "computer.key", "computer.scroll", "computer.takeover", "computer.returnControl", "computer.vncTicket", "preview.open", "preview.close",
   "applications.install", "applications.launch", "skills.runScript", "skills.revokeExecution", "userProfile.update", "settings.saveGeneral", "attachments.pick",
-  "teams.createContentTeam", "bots.create", "bots.update", "bots.setPinned", "bots.setUnread", "bots.setHidden", "bots.copyConversationId",
+  "bots.create", "bots.update", "bots.setPinned", "bots.setUnread", "bots.setHidden", "bots.copyConversationId",
   "rooms.create", "rooms.update", "rooms.archive", "rooms.setPinned", "rooms.setUnread", "rooms.setHidden", "rooms.copyConversationId", "rooms.addMember",
-  "conversations.setPinned", "conversations.setUnread", "conversations.setHidden", "projects.create",
+  "conversations.setPinned", "conversations.setUnread", "conversations.setHidden",
   "messages.send", "messages.retry", "messages.cancel", "runtime.cancel", "runtime.retry",
   "roomRuntime.send", "roomRuntime.cancel", "roomRuntime.cancelMember", "roomRuntime.continue", "roomRuntime.retryTurn", "view.request",
 ]);
@@ -318,7 +318,7 @@ export class ProductOperationService {
         }
         if (mediaOperation(tool.operation)) {
           const receipt = JSON.parse(previous) as { status?: string; result?: import("@shared/media-contracts").MediaImportResult };
-          if (["media.importPath", "media.pickImport"].includes(tool.operation) && receipt.result) {
+          if (["media.pickImport"].includes(tool.operation) && receipt.result) {
             for (const item of receipt.result.imported) this.dependencies.repository.media.resolveRuntimeRead({ sessionId: runtime.sessionId,
               executorBotId: runtime.executorBotId, runtimeRunId: runtime.id }, item.reference.mediaId, item.reference);
           }
@@ -457,7 +457,7 @@ export class ProductOperationService {
     }
     this.dependencies.repository.assertProductReplaySafe(runtime.clientNonce, tool, scopedOperation(tool.operation) ? runtime.executorBotId : undefined);
     const rootNonce = this.dependencies.repository.getUserMessage(runtime.clientNonce).origin?.rootClientNonce ?? runtime.clientNonce;
-    const resourceCount = { "bots.create": 1, "bots.duplicate": 1, "rooms.create": 1, "teams.createContentTeam": 6, "library.create": 1, "library.importText": 1, "documents.create": 1, "skills.create": 1 }[tool.operation] ?? 0;
+    const resourceCount = { "bots.create": 1, "bots.duplicate": 1, "rooms.create": 1, "library.create": 1, "library.importText": 1, "documents.create": 1, "skills.create": 1 }[tool.operation] ?? 0;
     let createdCount = resourceCount;
     let memorySourceEntryId: string | undefined;
     if (tool.operation === "memories.create") {
@@ -472,20 +472,12 @@ export class ProductOperationService {
       signal.throwIfAborted();
       this.validate(tool, invocation.runtimeRunId);
       const value = operation();
-      if (["library.importPath", "library.pickImport", "documents.import", "skills.import"].includes(tool.operation)) createdCount = (value as { imported: unknown[] }).imported.length;
-      if (tool.operation === "teams.createContentTeam" && (value as { disposition?: string }).disposition === "existing") createdCount = 0;
+      if (["library.pickImport"].includes(tool.operation)) createdCount = (value as { imported: unknown[] }).imported.length;
       if (createdCount && this.dependencies.repository.productResourceCount(rootNonce) + createdCount > 8) throw new AevorenBotError("PROJECT_CREATION_LIMIT");
       const creator = this.dependencies.repository.getBot(runtime.executorBotId);
       if (tool.operation === "bots.create") {
         const created = value as unknown as { bot: import("@shared/contracts").Bot };
         created.bot = this.dependencies.repository.updateBot(created.bot.id, created.bot.version, { modelSelection: creator.modelSelection, mcpServerIds: creator.mcpServerIds, memoryWorkspaceIds: [] });
-      }
-      if (tool.operation === "teams.createContentTeam" && createdCount) {
-        const team = value as unknown as import("@shared/contracts").TeamTemplateCreateResult;
-        for (const bot of team.bots) this.dependencies.repository.updateBot(bot.id, bot.version, { modelSelection: creator.modelSelection, mcpServerIds: creator.mcpServerIds, memoryWorkspaceIds: [] });
-        if (!this.dependencies.providers.getCapabilities?.(creator.modelSelection)?.handoff && team.room.room.leadBotId) this.dependencies.repository.updateRoom(team.room.room.id, team.room.room.version, { leadBotId: null });
-        team.room = this.dependencies.repository.getRoomDetail(team.room.room.id);
-        team.bots = team.room.members.map((member) => member.bot);
       }
       return value;
     }, (result) => ({
@@ -525,7 +517,6 @@ export class ProductOperationService {
     if (["userProfile.get", "userProfile.update"].includes(tool.operation)) result = { name: (result as import("@shared/contracts").UserProfile).name, hasAvatar: Boolean((result as import("@shared/contracts").UserProfile).avatarUrl) };
     if (tool.operation === "bots.list") result = (result as import("@shared/contracts").Bot[]).map(({ id, name, label, description, version, modelSelection }) => ({ id, name, label, description, version, modelSelection }));
     if (tool.operation === "rooms.list") result = (result as import("@shared/contracts").Room[]).map(({ id, name, description, version, membershipVersion, leadBotId, archivedAt }) => ({ id, name, description, version, membershipVersion, leadBotId, archivedAt }));
-    if (tool.operation === "workspaces.list") result = this.dependencies.repository.listSessionWorkspaces(runtime.sessionId, runtime.executorBotId).map(({ id, name, writeEnabled, automationEnabled, version }) => ({ id, name, writeEnabled, automationEnabled, version }));
     if (definition.effectClass === "write-reversible" || definition.effectClass === "irreversible") this.dependencies.productChanged?.();
     const output = this.result({ status: result && typeof result === "object" && "status" in result && result.status === "waiting_user" ? "waiting_user" : result === null && definition.interaction === "native" ? "cancelled" :
       ["execution.run", "processes.start", "computer.tasks.start", "computer.tasks.resume", "applications.install"].includes(tool.operation) && ["queued", "running", "building", "pending"].includes((result as { state?: string } | null)?.state ?? "") ? "running" : "completed", operation: tool.operation, result: result ?? null });

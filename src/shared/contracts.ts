@@ -1301,16 +1301,12 @@ export interface AevorenBotApi {
     setPinned(input: { sessionId: string; pinned: boolean }): Promise<ApiResult<ConversationSummary>>;
     setUnread(input: { sessionId: string; unread: boolean }): Promise<ApiResult<ConversationSummary>>;
     setHidden(input: { sessionId: string; hidden: boolean }): Promise<ApiResult<ConversationSummary>>;
-    setProject(input: { sessionId: string; projectId: string | null; expectedVersion: number }): Promise<ApiResult<ConversationSummary>>;
     clear(sessionId: string): Promise<ApiResult<Session>>;
     deleteBatch(input: ConversationBatchDeleteInput): Promise<ApiResult<ConversationBatchDeleteResult>>;
   };
-  teams: {
-    createContentTeam(input?: { projectId?: string }): Promise<ApiResult<TeamTemplateCreateResult>>;
-  };
   bots: {
     list(): Promise<ApiResult<Bot[]>>;
-    create(input?: { projectId?: string }): Promise<ApiResult<{ bot: Bot; session: Session }>>;
+    create(): Promise<ApiResult<{ bot: Bot; session: Session }>>;
     update(input: { id: string; expectedVersion: number; patch: BotPatch }): Promise<ApiResult<Bot>>;
     setPinned(input: { id: string; pinned: boolean }): Promise<ApiResult<Bot>>;
     setUnread(input: { id: string; unread: boolean }): Promise<ApiResult<Bot>>;
@@ -1328,17 +1324,6 @@ export interface AevorenBotApi {
     listProposals(input?: { botId?: string; state?: MemoryProposalState }): Promise<ApiResult<MemoryProposal[]>>;
     acceptProposal(input: { id: string; expectedVersion: number; content?: string; kind?: MemoryKind; expiresAt?: string | null }): Promise<ApiResult<{ proposal: MemoryProposal; memory: MemoryItem }>>;
     rejectProposal(input: { id: string; expectedVersion: number }): Promise<ApiResult<MemoryProposal>>;
-  };
-  workspaces: {
-    list(): Promise<ApiResult<Workspace[]>>;
-    add(input?: { projectId?: string }): Promise<ApiResult<WorkspaceRegistrationResult | null>>;
-    updatePermissions(input: { id: string; expectedVersion: number; writeEnabled: boolean; automationEnabled: boolean }): Promise<ApiResult<Workspace>>;
-    reveal(input: { workspaceId: string; path: string }): Promise<ApiResult<boolean>>;
-    remove(input: { id: string; expectedVersion: number }): Promise<ApiResult<Workspace>>;
-  };
-  projects: {
-    list(): Promise<ApiResult<Project[]>>;
-    create(input: { name: string }): Promise<ApiResult<Project>>;
   };
   tools: {
     list(input: { sessionId: string }): Promise<ApiResult<ToolInvocation[]>>;
@@ -1360,7 +1345,7 @@ export interface AevorenBotApi {
     getBriefApproval(input: { roomId: string; sourceRuntimeRunId: string }): Promise<ApiResult<BriefApprovalView>>;
     approveBrief(input: BriefApprovalCommand): Promise<ApiResult<RoomSendResult>>;
     list(input?: { includeArchived?: boolean }): Promise<ApiResult<Room[]>>;
-    create(input: { memberBotIds: string[]; name?: string; description?: string; projectId?: string; leadBotId?: string | null }): Promise<ApiResult<RoomDetail>>;
+    create(input: { memberBotIds: string[]; name?: string; description?: string; leadBotId?: string | null }): Promise<ApiResult<RoomDetail>>;
     get(id: string): Promise<ApiResult<RoomDetail>>;
     update(input: { id: string; expectedVersion: number; patch: RoomPatch }): Promise<ApiResult<Room>>;
     archive(input: { id: string; archived: boolean }): Promise<ApiResult<Room>>;

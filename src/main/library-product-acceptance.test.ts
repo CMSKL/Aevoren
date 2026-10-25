@@ -53,7 +53,7 @@ async function fixture() {
     repository.resolveToolApproval(prepared.approval.id, prepared.approval.version, "allow-once");
     return executor.execute(prepared.invocation.id, signal);
   };
-  return { root, source, repository, databasePath, registration, actor, libraryService, service, runtime, executor, prepare, execute };
+  return { root, source, repository, databasePath, registration, actor, libraryService, service, runtime, executor, prepare, execute, dependencies };
 }
 
 afterEach(() => {
@@ -129,10 +129,10 @@ describe("library product receipts and scope acceptance", () => {
     expect(f.repository.listToolInvocations(f.actor.session.id).filter(invocation => invocation.state === "succeeded")).toHaveLength(2);
   });
 
-  it.each(["documents", "skills"] as const)("keeps illegal %s import paths rejected without publishing any bytes", async namespace => {
+  it.each(["documents", "skills"] as const)("rejects retired %s directory-import aliases without publishing any bytes", async namespace => {
     const f = await fixture();
     writeFileSync(join(f.root, "outside.md"), "UNAUTHORIZED_OUTSIDE_FIXTURE");
-    for (const path of ["../outside.md", join(f.root, "outside.md"), "..\\outside.md", "C:/outside.md"]) {
+    for (const path of ["inside.md", "../outside.md", join(f.root, "outside.md"), "..\\outside.md", "C:/outside.md"]) {
       await expect(f.execute(call(`${namespace}.import`, { workspaceId: f.registration.workspace.id, path }))).rejects.toThrow();
     }
     expect(f.repository.library.available()).toEqual([]);
@@ -160,6 +160,7 @@ describe("library product receipts and scope acceptance", () => {
     mkdirSync(batch);
     writeFileSync(join(batch, "first.md"), "first source");
     writeFileSync(join(batch, "second.md"), "second source");
+    f.dependencies.pickLibraryPaths = async () => [join(batch, "first.md"), join(batch, "second.md")];
     const commitImport = vi.spyOn(f.libraryService, "commitImport");
     const originalReceipt = f.repository.completeProductToolInvocation.bind(f.repository);
     let rowsBeforeReceipt = 0;
@@ -175,7 +176,7 @@ describe("library product receipts and scope acceptance", () => {
     const raw = new DatabaseSync(f.databasePath);
     raw.exec("CREATE TRIGGER reject_library_receipt BEFORE UPDATE OF state ON tool_invocations WHEN NEW.state='succeeded' BEGIN SELECT RAISE(ABORT, 'receipt rejected'); END;");
     raw.close();
-    await expect(f.execute(call("documents.import", { workspaceId: f.registration.workspace.id, path: "batch" }))).rejects.toMatchObject({ code: "TOOL_EXECUTION_FAILED" });
+    await expect(f.execute(call("library.pickImport", { kind: "document" }))).rejects.toMatchObject({ code: "TOOL_EXECUTION_FAILED" });
     expect(commitImport).toHaveBeenCalledOnce();
     expect(commitImport.mock.results[0]!.type).toBe("return");
     expect(commitImport.mock.results[0]!.value.imported).toHaveLength(2);
@@ -194,13 +195,14 @@ describe("library product receipts and scope acceptance", () => {
     const f = await fixture();
     writeFileSync(join(f.source, "original.md"), "real staged source");
     const controller = new AbortController();
-    const original = f.libraryService.prepareImportPath.bind(f.libraryService);
-    vi.spyOn(f.libraryService, "prepareImportPath").mockImplementation(async (...input) => {
+    f.dependencies.pickLibraryPaths = async () => [join(f.source, "original.md")];
+    const original = f.libraryService.prepareImportPaths.bind(f.libraryService);
+    vi.spyOn(f.libraryService, "prepareImportPaths").mockImplementation(async (...input) => {
       const staged = await original(...input);
       controller.abort();
       return staged;
     });
-    await expect(f.execute(call("documents.import", { workspaceId: f.registration.workspace.id, path: "original.md" }), controller.signal)).rejects.toMatchObject({ code: "TOOL_EXECUTION_CANCELLED" });
+    await expect(f.execute(call("library.pickImport", { kind: "document" }), controller.signal)).rejects.toMatchObject({ code: "TOOL_EXECUTION_CANCELLED" });
     expect(f.repository.library.list({ sessionId: f.actor.session.id })).toEqual([]);
     expect(f.repository.listToolInvocations(f.actor.session.id).every(invocation => invocation.state !== "succeeded")).toBe(true);
   });
@@ -209,7 +211,8 @@ describe("library product receipts and scope acceptance", () => {
     const f = await fixture();
     const path = join(f.source, "original.md");
     writeFileSync(path, "original import bytes");
-    const command = call("documents.import", { workspaceId: f.registration.workspace.id, path: "original.md" });
+    f.dependencies.pickLibraryPaths = async () => [path];
+    const command = call("library.pickImport", { kind: "document" });
     const first = await f.execute(command);
     rmSync(path);
     const reused = JSON.parse((await f.execute(command)).content);

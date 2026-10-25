@@ -558,7 +558,8 @@ test("imports and exports one complete Skill through IPC and keeps bytes availab
     writeFileSync(join(source, "references", "guide.md"), "REFERENCE_PACKAGE_BYTES");
     writeFileSync(join(source, "scripts", "run.sh"), script);
     writeFileSync(join(source, "assets", "sample.png"), binary);
-    const imported = value(await libraryCall<LibraryImportResult>(f.page, "importPath", { sessionId: bot.sessionId, kind: "skill", workspaceId: f.workspace.id, path: "original-skill" }));
+    await f.application.evaluate((_electron, path) => { process.env.AEVOREN_BOT_LIBRARY_IMPORT_TEST_PATHS = path; }, source);
+    const imported = value(await libraryCall<LibraryImportResult>(f.page, "pickImport", { sessionId: bot.sessionId, kind: "skill", directory: true }));
     expect(imported.imported).toHaveLength(1);
     const content = imported.imported[0]!;
     expect(content.revision.files).toHaveLength(3);
@@ -571,7 +572,8 @@ test("imports and exports one complete Skill through IPC and keeps bytes availab
     expect(readFileSync(join(exported!.path, "assets", "sample.png"))).toEqual(binary);
     expect(readFileSync(join(exported!.path, "scripts", "run.sh"), "utf8")).toBe(script);
     expect(readFileSync(join(exported!.path, "references", "guide.md"), "utf8")).toBe("REFERENCE_PACKAGE_BYTES");
-    const reimported = value(await libraryCall<LibraryImportResult>(f.page, "importPath", { sessionId: bot.sessionId, kind: "skill", workspaceId: f.workspace.id, path: "exported-skill" }));
+    await f.application.evaluate((_electron, path) => { process.env.AEVOREN_BOT_LIBRARY_IMPORT_TEST_PATHS = path; }, exported!.path);
+    const reimported = value(await libraryCall<LibraryImportResult>(f.page, "pickImport", { sessionId: bot.sessionId, kind: "skill", directory: true }));
     expect(reimported.imported[0]!.revision.digest).toBe(content.revision.digest);
     expect(reimported.imported[0]!.revision.files).toEqual(content.revision.files);
   });

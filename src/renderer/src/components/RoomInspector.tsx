@@ -10,7 +10,6 @@ import { DetailsTabs } from "./DetailsTabs";
 import { RoomAvatar } from "./RoomAvatar";
 import { BotAvatarIcon } from "./BotAvatarIcon";
 import { CheckIcon, CloseIcon } from "./Icons";
-import { ConversationWorkspace, type ConversationWorkspaceProps } from "./ConversationWorkspace";
 import { LibraryPanel, type LibraryPanelHandle } from "./LibraryPanel";
 import { MediaLibraryPanel } from "./MediaLibraryPanel";
 import { EnvironmentPanel } from "./EnvironmentPanel";
@@ -30,7 +29,6 @@ type Props = {
   detail: RoomDetail | null;
   bots: Bot[];
   userProfile?: UserProfile;
-  conversationWorkspace: ConversationWorkspaceProps;
   active: boolean;
   mobileOpen: boolean;
   surfaceActive?: boolean;
@@ -52,7 +50,7 @@ function same(left: Draft, right: Draft): boolean {
 }
 
 export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function RoomInspector(
-  { id, detail, bots, userProfile, conversationWorkspace, active, mobileOpen, surfaceActive = true, error, onDetailUpdated, onError, onOpenBot, onMobileClose, onUseResource, onUseMedia },
+  { id, detail, bots, userProfile, active, mobileOpen, surfaceActive = true, error, onDetailUpdated, onError, onOpenBot, onMobileClose, onUseResource, onUseMedia },
   ref,
 ) {
   const [draft, setDraft] = useState<Draft | null>(detail ? toDraft(detail) : null);
@@ -247,7 +245,6 @@ export const RoomInspector = forwardRef<RoomInspectorHandle, Props>(function Roo
         { id: "skill", label: "Skill" }, { id: "environment", label: "高级工具" }, { id: "computer", label: "电脑" }, { id: "apps", label: "应用" },
       ]} primary={["details", "library", "members"]} value={tab} disabled={changingTab} onChange={next => changeTab(next as InspectorTab)} />
       <div id={`room-${detail.room.id}-details-panel`} role="tabpanel" aria-labelledby={`room-${detail.room.id}-details-tab`} hidden={tab !== "details"}>
-      <ConversationWorkspace {...conversationWorkspace} />
       <section className="inspector-group inspector-profile-fields" aria-label="群聊资料">
       <label className="field inspector-primary-field">
         <span>群协调者</span>

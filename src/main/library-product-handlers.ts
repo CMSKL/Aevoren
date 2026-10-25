@@ -5,7 +5,7 @@ import type {
 import { LIBRARY_OPERATION_SCHEMAS, LIBRARY_PRODUCT_OPERATIONS } from "@shared/library-product";
 import {
   libraryAvailableSchema, libraryBindingSchema, libraryCreateSchema, libraryExportSchema,
-  libraryImportPathSchema, libraryListSchema, libraryMutationSchema, libraryPickImportSchema,
+  libraryListSchema, libraryMutationSchema, libraryPickImportSchema,
   libraryReadSchema, libraryRestoreVersionSchema, librarySetEnabledSchema, libraryUpdateSchema,
   libraryVersionsSchema,
 } from "@shared/library-schemas";
@@ -160,14 +160,6 @@ export function addLibraryProductHandlers(
         assertLibraryNotCancelled(signal);
         if (!paths) return null;
         const prepared = await service().prepareImportPaths(sessionId, paths, pickInput.kind, signal, actor);
-        return changed("created", sessionId, () => {
-          const result = service().commitImport(prepared, signal, actor);
-          return { ...result, imported: result.imported.map((content) => contentResult(content)) };
-        }, (value) => value.imported.map((content) => (content as LibraryContent).resource.id));
-      }
-      if (action === "importPath" || action === "import") {
-        const importInput = libraryImportPathSchema.parse({ ...parsed, ...(kind ? { kind } : {}) });
-        const prepared = await service().prepareImportPath(importInput, signal, actor);
         return changed("created", sessionId, () => {
           const result = service().commitImport(prepared, signal, actor);
           return { ...result, imported: result.imported.map((content) => contentResult(content)) };

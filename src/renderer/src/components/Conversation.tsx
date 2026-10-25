@@ -163,8 +163,6 @@ type TranscriptItemProps = {
   onRetryRun(runId: string): void;
   onRetryRoomTurn(turnId: string): void;
   onOpenSpeaker(botId: string): void;
-  onRevealWorkspaceArtifact(workspaceId: string, path: string): void;
-  onOpenWorkspaces(): void;
   onWorkflowAction(action: WorkflowAction): Promise<boolean>;
 };
 
@@ -353,8 +351,6 @@ const TranscriptItem = memo(function TranscriptItem({
   onRetryRun,
   onRetryRoomTurn,
   onOpenSpeaker,
-  onRevealWorkspaceArtifact,
-  onOpenWorkspaces,
   onWorkflowAction,
 }: TranscriptItemProps): React.JSX.Element {
   const evidenceId = useId();
@@ -483,8 +479,6 @@ const TranscriptItem = memo(function TranscriptItem({
           {entry.role === "assistant"
             ? <ArtifactStatusBar
                 writes={toolInvocations}
-                onRevealWorkspace={onRevealWorkspaceArtifact}
-                onOpenWorkspaces={onOpenWorkspaces}
               />
             : null}
           {briefApproval ? (
@@ -571,11 +565,9 @@ type ConversationProps = {
   onOpenBots(): void;
   onOpenRoomSettings(): void;
   onOpenDetails?(): void;
-  onOpenWorkspaces(): void;
   onPickAttachments(): Promise<AttachmentDraft[]>;
   onResolveApproval(approval: ApprovalRequest, resolution: ApprovalResolution): Promise<boolean>;
   onRememberPublicRead?(approval: ApprovalRequest): Promise<boolean>;
-  onRevealWorkspaceArtifact(workspaceId: string, path: string): Promise<boolean>;
   onSend(text: string, targetBotIds?: string[], routingMode?: UserRoomRoutingMode, attachments?: AttachmentDraft[], resourceRefs?: ResourceReference[], mediaRefs?: MessageMediaReference[]): Promise<boolean>;
   initialDraft?: ConversationComposerDraft;
   onDraftChange?(sessionId: string, draft: ConversationComposerDraft): ConversationComposerDraft | void;
@@ -615,11 +607,9 @@ export function Conversation({
   onOpenBots,
   onOpenRoomSettings,
   onOpenDetails,
-  onOpenWorkspaces,
   onPickAttachments,
   onResolveApproval,
   onRememberPublicRead,
-  onRevealWorkspaceArtifact,
   onSend,
   onApproveBrief,
   onRetryMessage,
@@ -992,7 +982,6 @@ export function Conversation({
   }, [onRetryRoomTurn]);
 
   const retryRoomTurnFromMessage = useCallback((turnId: string): void => { void retryRoomTurn(turnId); }, [retryRoomTurn]);
-  const revealWorkspaceArtifact = useCallback((workspaceId: string, path: string): void => { void onRevealWorkspaceArtifact(workspaceId, path); }, [onRevealWorkspaceArtifact]);
 
   async function submit(): Promise<void> {
     const text = draft.trim();
@@ -1240,13 +1229,9 @@ export function Conversation({
                 <ArtifactCard
                   artifact={artifact}
                   key={artifact.id}
-                  onOpen={() => artifact.invocation.workspaceId
-                    ? void onRevealWorkspaceArtifact(artifact.invocation.workspaceId, artifact.invocation.targetPath)
-                    : onOpenWorkspaces()}
                 />
               ))}
             </div>
-            <footer><button type="button" className="secondary-button" onClick={() => { setArtifactShelfScopeId(null); onOpenWorkspaces(); }}>管理文件夹</button></footer>
           </aside>
         </>
       ) : null}
@@ -1351,8 +1336,6 @@ export function Conversation({
               onRetryRun={onRetryRun}
               onRetryRoomTurn={retryRoomTurnFromMessage}
               onOpenSpeaker={onOpenSpeaker}
-              onRevealWorkspaceArtifact={revealWorkspaceArtifact}
-              onOpenWorkspaces={onOpenWorkspaces}
               onWorkflowAction={handleWorkflowAction}
             />
             </Fragment>

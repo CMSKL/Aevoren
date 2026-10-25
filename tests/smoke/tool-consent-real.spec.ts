@@ -1,25 +1,18 @@
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _electron as electron, expect, test, type Page } from "@playwright/test";
 import type { AevorenBotApi } from "../../src/shared/contracts";
 import { AppRepository } from "../../src/main/database";
-import { WorkspaceService } from "../../src/main/workspace-service";
 import { removeTestDirectory } from "./test-cleanup";
 import { openToolRecords } from "./tool-ui";
 
-test("real Claude public queries run after one explicit consent while files still require approval", async () => {
+test("real Claude public queries honor explicit consent and reuse the public-query setting", async () => {
   test.skip(process.env.AEVOREN_REAL_TOOL_CONSENT !== "1", "requires explicit real Claude/public-web verification");
   test.setTimeout(420_000);
-  const publicDocument = process.env.AEVOREN_PUBLIC_CLAUDE_DOC;
-  if (!publicDocument || !readFileSync(publicDocument, "utf8").includes("URL Source: https://code.claude.com/docs/en/mcp")) throw new Error("A verified public document is required");
   const data = mkdtempSync(join(tmpdir(), "aevoren-consent-real-"));
-  const root = join(data, "公开资料");
-  mkdirSync(root);
-  copyFileSync(publicDocument, join(root, "public-mcp-doc.txt"));
   const repository = new AppRepository(join(data, "aevoren-bot.sqlite"));
-  const registered = await new WorkspaceService(repository).registerRoot(root);
-  const created = repository.createBot(registered.project.id);
+  const created = repository.createBot();
   repository.updateBot(created.bot.id, created.bot.version, {
     name: "公开资料研究员", instructions: "仅处理用户指定的公开文档。调研必须真实搜索并抓取网页，来源和时间使用工具结果。需要授权时通过工具调用请求宿主审批，不用文字询问代替。只使用提供的宿主工具，不发布、不登录、不读私有数据。",
   });
@@ -100,39 +93,10 @@ test("real Claude public queries run after one explicit consent while files stil
       if (["failed", "interrupted"].includes(run.state)) throw new Error(`Real repeat query failed ${run.lastErrorCode}; evidence ${data}`);
       return state.runtime.data.runs.filter(item => item.state === "completed").length;
     }, { timeout: 120_000, intervals: [500] }).toBe(2);
-    // A separate file task avoids mixing earlier network-only instructions
-    // into the permission-boundary proof; the persisted public consent remains.
-    const fileSessionId = await page.evaluate(async (projectId) => {
-      const api = (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot;
-      const next = await api.bots.create({ projectId });
-      if (!next.ok) throw new Error(next.error.code);
-      const updated = await api.bots.update({ id: next.data.bot.id, expectedVersion: next.data.bot.version, patch: {
-        name: "文件权限验证员", instructions: "只读取用户指定的公开文件。必须通过实际 Workspace 工具请求宿主审批并拿到结果；不能用文字伪造调用或返回。不联网，不写文件。",
-        modelSelection: { providerInstanceId: "claude.default", modelId: "k3" },
-      } });
-      if (!updated.ok) throw new Error(updated.error.code);
-      return next.data.session.id;
-    }, registered.project.id);
-    await page.reload();
-    await page.getByText("文件权限验证员", { exact: true }).first().click();
-    await expect(page.getByRole("heading", { name: "文件权限验证员", exact: true })).toBeVisible();
-    await send(page, "请发起 workspace_read，读取公开资料工作区 public-mcp-doc.txt 的前 1000 字节。通过实际工具调用请求宿主审批，成功拿到结果后概述文档内容。");
-    await expect(permission).toBeVisible({ timeout: 90_000 });
-    await expect(permission).toContainText("读取文件");
-    await expect(permission.getByRole("button", { name: "允许公开查询并记住" })).toHaveCount(0);
-    await page.screenshot({ path: join(tmpdir(), "aevoren-tool-consent-real-file.png") });
-    await permission.getByRole("button", { name: "停止任务", exact: true }).click();
-    await expect(permission).toBeHidden();
-    const final = await snapshot(fileSessionId);
-    if (!final.tools.ok || !final.runtime.ok) throw new Error("Final evidence missing");
-    expect(final.runtime.data.runs.at(-1)?.state).toBe("cancelled");
-    const reads = final.tools.data.filter(tool => tool.toolKind === "workspace-read");
-    expect(reads.length).toBeGreaterThan(0);
-    expect(reads.every(tool => tool.state === "cancelled" && tool.attemptCount === 0 && tool.startedAt === null)).toBe(true);
     expect(errors).toEqual([]);
     const publicResult = await snapshot();
     if (!publicResult.tools.ok || !publicResult.runtime.ok) throw new Error("Public evidence missing");
-    writeFileSync(join(tmpdir(), "aevoren-tool-consent-real-result.json"), JSON.stringify({ verified: true, provider: "claude.default", model: "k3", publicTools: publicResult.tools.data.map(({ toolKind, state, attemptCount, resultDigest, resultMetadata }) => ({ toolKind, state, attemptCount, resultDigest, resultMetadata })), protectedTools: final.tools.data.map(({ toolKind, state, attemptCount, resultDigest }) => ({ toolKind, state, attemptCount, resultDigest })), publicRuns: publicResult.runtime.data.runs.map(({ state, lastErrorCode }) => ({ state, lastErrorCode })), protectedRuns: final.runtime.data.runs.map(({ state, lastErrorCode }) => ({ state, lastErrorCode })), errors }, null, 2));
+    writeFileSync(join(tmpdir(), "aevoren-tool-consent-real-result.json"), JSON.stringify({ verified: true, provider: "claude.default", model: "k3", publicTools: publicResult.tools.data.map(({ toolKind, state, attemptCount, resultDigest, resultMetadata }) => ({ toolKind, state, attemptCount, resultDigest, resultMetadata })), publicRuns: publicResult.runtime.data.runs.map(({ state, lastErrorCode }) => ({ state, lastErrorCode })), errors }, null, 2));
   } catch (error) { retain = true; throw error; }
   finally { await app.close(); if (!retain) removeTestDirectory(data); }
 });

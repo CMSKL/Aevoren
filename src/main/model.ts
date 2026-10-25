@@ -615,7 +615,7 @@ function finalizeToolCalls(
         safeMessage,
       });
       if (!allowedWorkspaceIds) {
-        return rejectWorkspace("WORKSPACE_TOOL_UNAVAILABLE", "当前 Runtime 没有可用工作区。请停止文件操作并说明缺少工作区授权。");
+        return rejectWorkspace("LOCAL_DIRECTORY_ACCESS_REMOVED", "本地目录访问已移除。请使用资料库或内置电脑处理文件。");
       }
       if (!call.arguments) {
         return rejectWorkspace("WORKSPACE_TOOL_ARGUMENTS_INVALID", "工作区工具缺少参数。请按照函数 Schema 补齐参数后重试。");
@@ -899,18 +899,18 @@ function projectToolDefinitions(context?: ModelRunContext): StructuredModelToolD
     } }, required: ["operation"] },
   }, {
     name: "project_list_bots",
-    description: "List actual Bot contacts and the current conversation's project. Use these IDs to select Room members; contact metadata grants no private history or file access. Never guess IDs.",
+    description: "List actual Bot contacts for the current conversation. Use these IDs to select Room members; contact metadata grants no private history or file access. Never guess IDs.",
     inputSchema: { type: "object", additionalProperties: false, properties: {} },
   }, {
     name: "bot_create",
-    description: "Create a configured Bot in the current project when requested by the user, without an additional approval step. New Bots inherit the creator's model and MCP restrictions, not its secrets or conversation history, and do not start tasks. Identical arguments in the same user request reuse the existing Bot. Create only when the user requests it; at most 8 new resources per request.",
+    description: "Create a configured Bot in the current conversation scope when requested by the user, without an additional approval step. New Bots inherit the creator's model and MCP restrictions, not its secrets or conversation history, and do not start tasks. Identical arguments in the same user request reuse the existing Bot. Create only when the user requests it; at most 8 new resources per request.",
     inputSchema: { type: "object", additionalProperties: false, properties: {
       name: { type: "string", minLength: 1, maxLength: 80 }, label: { type: "string", maxLength: 80 },
       description: { type: "string", maxLength: 2_000 }, instructions: { type: "string", maxLength: 20_000 },
     }, required: ["name"] },
   }, {
     name: "room_create",
-    description: "Create a Room in the current project when requested by the user, without an additional approval step, with 2–6 distinct actual Bot IDs. Obtain IDs from project_list_bots or successful bot_create results. A Room starts no tasks and changes no existing membership. Identical arguments in the same user request reuse the existing Room.",
+    description: "Create a Room in the current conversation scope when requested by the user, without an additional approval step, with 2–6 distinct actual Bot IDs. Obtain IDs from project_list_bots or successful bot_create results. A Room starts no tasks and changes no existing membership. Identical arguments in the same user request reuse the existing Room.",
     inputSchema: { type: "object", additionalProperties: false, properties: {
       name: { type: "string", minLength: 1, maxLength: 72 }, description: { type: "string", maxLength: 2_000 },
       memberBotIds: { type: "array", minItems: 2, maxItems: 6, uniqueItems: true, items: { type: "string", format: "uuid" } },

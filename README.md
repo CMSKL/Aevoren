@@ -22,21 +22,21 @@ Chat with persistent Bots, bring them together in groups, organize documents and
 
 <p align="center"><sub>The v0.3.0-beta.42 main chat interface: conversation list, ongoing discussion and message composer. Dialogue is prewritten sample content.</sub></p>
 
-Aevoren is a **local-first desktop workspace for AI conversations and collaboration**. Each Bot has its own role, model and ongoing conversations. Groups bring several Bots into the same task, while documents, reviewed Memory, permissions and execution records stay organized around the conversation. Connect an OpenAI-compatible API, Claude Code or Codex CLI, and choose a separate execution model for computer tasks.
+Aevoren is a **local-first desktop app for AI conversations and collaboration**. Each Bot has its own role, model and ongoing conversations. Groups bring several Bots into the same task, while documents, reviewed Memory, permissions and execution records stay organized around the conversation. Connect an OpenAI-compatible API, Claude Code or Codex CLI, and choose a separate execution model for computer tasks.
 
 Local-first means that conversation history and application state live on your computer. Model calls, web access and external app connections still send relevant content to the selected services; see [Data and permissions](#data-and-permissions).
 
 ## Give AI a computer to work in
 
-Give a Bot a goal and choose where it works. Its **built-in Linux computer** can browse, run code and manage files in an isolated workspace. On your Mac, you can separately authorize a **specific background application window or shared browser tab**. Inspect the actual screen and results, take over when needed, and explicitly hand control back.
+Give a Bot a goal and choose where it works. Its **built-in Linux computer** can browse, run code and manage files in an isolated environment. On your Mac, you can separately authorize a **specific background application window or shared browser tab**. Inspect the actual screen and results, take over when needed, and explicitly hand control back.
 
-![Aevoren isolated computer workspace with a live browser screen](assets/screenshots/computer-workspace.png)
+![Aevoren isolated computer desktop with a live browser screen](assets/screenshots/computer-workspace.png)
 
 <p align="center"><sub>A running isolated computer and browser displaying a local demonstration page. See the screenshot record for the capture method and recorded actions.</sub></p>
 
 | Computer target | Available work | Setup and boundary |
 | --- | --- | --- |
-| **Bot’s built-in computer** | Browser and desktop input, Shell / Python / Node, Linux apps and persistent files | Local Docker Linux engine; separate workspace and profile for each chat and executing Bot |
+| **Bot’s built-in computer** | Browser and desktop input, Shell / Python / Node, Linux apps and persistent files | Local Docker Linux engine; separate working directory and profile for each chat and executing Bot |
 | **Shared browser tab on this Mac** | Background screenshots, clicks, typing, text reading and navigation with the tab’s existing login | Manually load and pair the bundled extension, then share a specific tab; no cookie copying or visible-tab switching |
 | **Application window on this Mac** | Background actions on accessible buttons, text fields and select-all | Explicitly select a window; Screen Recording and Accessibility permissions required; window capture needs macOS 14+ |
 
@@ -75,7 +75,7 @@ Ordinary conversations and authorized Mac targets do not require Docker. The **b
 1. **Configure a model connection.** Click the bottom-left account avatar and open **Settings → Models**. Configure an API connection, or check the installation and authentication of your local Claude Code / Codex CLI.
 2. **Create a Bot.** Give it a name, role and working instructions. In its details, open **More → Models & capabilities** to choose a source and model. Shared connections still allow each Bot to use a different model.
 3. **Start a conversation.** Describe a task. Use **＋** beside the composer to add attachments, media, document references or Skills. Search Bots and groups with `Cmd/Ctrl + K`.
-4. **Choose resources and a computer target.** Bind documents in Library and select a workspace folder when needed. Open **Settings → Computer** to choose the built-in Linux computer or explicitly enable and select a Mac window/shared tab, then open the conversation’s **Computer** view.
+4. **Choose resources and a computer target.** Bind or import documents in Library. Open **Settings → Computer** to choose the built-in Linux computer or explicitly enable and select a Mac window/shared tab, then open the conversation’s **Computer** view.
 5. **Inspect the results.** Task details show tool output, delivery files and failures. Choose **My turn (我来操作)** to pause AI access to the selected computer; choose **Hand to AI (交给 AI)** when you are ready to return control.
 
 ### Choose a model source
@@ -127,11 +127,11 @@ Groups support **2–6 members** with three main collaboration modes:
 | **Everyone** (`@所有人`) | Multiple perspectives or parallel research | All members start concurrently and stream their own replies; one member's failure or wait does not block the others |
 | Fixed coordinator | Research, then writing, then review | Assigns work in dependency order and summarizes the results |
 
-Stop an entire group batch or retry an individual failed member. Joining a group does not automatically share a member's private documents, Memory or folder permissions. A model saying “done” does not count as successful tool execution; content-team Brief decisions, failure recovery and delivery status have their own interface states.
+Stop an entire group batch or retry an individual failed member. Joining a group does not automatically share a member's private documents, Memory or other permissions. A model saying “done” does not count as successful tool execution; failure recovery, task handoffs and delivery status have their own interface states.
 
 ### 2. Computer targets, browsers and execution
 
-**Built-in Linux computer.** Each conversation and executing member has its own Docker Linux environment, persistent workspace and Chromium profile. With this target selected, opening **Computer** prepares it and shows progress or an actionable Docker/Colima error. The following capabilities belong to this isolated environment:
+**Built-in Linux computer.** Each conversation and executing member has its own Docker Linux environment, persistent working directory and Chromium profile. With this target selected, opening **Computer** prepares it and shows progress or an actionable Docker/Colima error. The following capabilities belong to this isolated environment:
 
 - **Browser and desktop:** navigate, observe, capture screenshots, click, type, use key combinations and drag continuously, with a fresh real frame after an action.
 - **Commands and services:** run Shell, Node or Python, inspect actual stdout/stderr and exit codes, cancel tasks, manage background processes and preview registered services.
@@ -184,18 +184,17 @@ Configure Gmail, Drive and Notion under **Settings → App connections**. Connec
 
 External writes require a specific **account, operation and target grant plus approval of a fixed draft**. Unknown results must be checked rather than sent again automatically. Implementation and controlled tests are available; genuine Google/Notion authorization and reads/writes still require validation with the particular account.
 
-### 6. Memory, workspaces and Routines
+### 6. Memory and Routines
 
-- **Long-term Memory:** User, Bot and Workspace scopes. Background capture proposes pending candidates; only accepted entries enter long-term context.
-- **Local workspaces:** folder permissions belong to the conversation. Authorized tools can list, read and search files. Host writes are limited to new UTF-8 Markdown/CSV files inside explicitly writable roots and cannot overwrite existing files.
+- **Long-term Memory:** User-wide and Bot-specific scopes. Background capture proposes pending candidates; only accepted entries enter long-term context.
 - **Routines:** one-time, interval or cron schedules, with execution history, notifications and background window behavior. macOS also supports optional login startup.
 - **Conversation recovery:** SQLite transcripts, the Send Journal, stable request identities and tool records support streaming, cancellation, idempotent retry and crash recovery.
 
-New ordinary chats start without a local folder. Manage folders, projects and archived chats under **Settings → Capabilities and permissions → Local files and chat management**. Clearing chat history preserves contacts, accepted Memory and actual files.
+Start directly from Chats or Contacts without selecting a project or local folder. Import or bind resources through Library, and process files inside the isolated computer. Existing databases and files remain intact; removing an entry point neither clears historical data nor broadens old folder grants to other conversations. Clearing chat history preserves contacts, accepted Memory and actual files.
 
 ### 7. Product actions available to AI
 
-Models discover and use app actions through `product_catalog → product_describe → product_execute`. These cover Bot/group management, delegation, documents, Skills, Memory, workspaces, Routines, computers and app connections. The interface and AI share the same host validation and permission rules.
+Models discover and use app actions through `product_catalog → product_describe → product_execute`. These cover Bot/group management, delegation, documents, Skills, Memory, Routines, computers and app connections. The interface and AI share the same host validation and permission rules.
 
 Routine internal operations and authorized computer work run directly. New permissions, high-impact operations and private reads retain their relevant confirmation steps. Unsent draft reads and edits are bound to the calling task's conversation; switching the visible chat does not give that task access to another chat's draft.
 
@@ -206,7 +205,7 @@ Routine internal operations and authorized computer work run directly. New permi
 | Bots, groups, conversations, Memory, settings and task records | SQLite in Electron's local user-data directory |
 | API Keys / OAuth credentials | Encrypted with Electron `safeStorage`; saved secret values are not returned to the interface or model |
 | Imported documents and Skill files | Application-owned storage with digest checks; access follows conversation bindings and current authorization |
-| Isolated computer and browser data | Workspace, runtime state and browser profile in separate Docker volumes |
+| Isolated computer and browser data | Working directory, runtime state and browser profile in separate Docker volumes |
 | Authorized Mac windows and shared tabs | Real application data and existing browser login on this Mac; access is restricted to the selected target, with no per-chat data isolation |
 | Model and external service requests | Authorized context, tool inputs or images needed for the task; data handling depends on the selected service |
 
