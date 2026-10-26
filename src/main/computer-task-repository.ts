@@ -52,7 +52,8 @@ export function restoreComputerObservationColumns(database: DatabaseSync): void 
 }
 
 export class ComputerTaskRepository {
-  constructor(private readonly db: DatabaseSync, private readonly assertScope: (scope: BrowserScope) => void) {}
+  constructor(private readonly db: DatabaseSync, private readonly assertScope: (scope: BrowserScope) => void,
+    private readonly nextFileEvidenceOrdinal: () => number) {}
 
   layoutMigration(environmentId: string): LayoutMigration | null {
     const row = this.db.prepare("SELECT payload_json FROM computer_layout_migrations WHERE environment_id=?").get(environmentId) as { payload_json: string } | undefined;
@@ -107,7 +108,7 @@ export class ComputerTaskRepository {
     this.db.prepare("INSERT INTO computer_tasks VALUES(?,?,?,?,?,?,?,?)").run(task.id, task.sessionId, task.executorBotId, parentRunId, input.clientNonce, task.state, task.version, JSON.stringify(task));
     return { task, reused: false };
   }
-  update(input: ComputerTaskId, expectedVersion: number, patch: Partial<Pick<ComputerTask, "state" | "segment" | "actionCount" | "result" | "errorCode" | "parentRunId">>): ComputerTask {
+  update(input: ComputerTaskId, expectedVersion: number, patch: Partial<Pick<ComputerTask, "state" | "segment" | "actionCount" | "result" | "errorCode" | "parentRunId" | "outputFiles">>): ComputerTask {
     const current = this.get(input);
     const task = { ...current, ...patch, version: expectedVersion + 1, updatedAt: new Date().toISOString() };
     const result = this.db.prepare("UPDATE computer_tasks SET state=?,version=?,payload_json=?,parent_run_id=? WHERE id=? AND version=?").run(task.state, task.version, JSON.stringify(task), task.parentRunId, task.id, expectedVersion);
@@ -123,7 +124,9 @@ export class ComputerTaskRepository {
   }
   finishStep(input: ComputerTaskId, step: ComputerTaskStep, state: ComputerTaskStep["state"], result: unknown): void {
     this.get(input);
-    this.db.prepare("UPDATE computer_task_steps SET payload_json=? WHERE id=? AND task_id=?").run(JSON.stringify({ ...step, state, result }), step.id, input.id);
+    const ordinal = state === "completed" && step.fileEvidence && ["execution.readFile", "execution.writeFile"].includes(step.operation)
+      ? this.nextFileEvidenceOrdinal() : undefined;
+    this.db.prepare("UPDATE computer_task_steps SET payload_json=? WHERE id=? AND task_id=?").run(JSON.stringify({ ...step, state, result, fileEvidenceOrdinal: ordinal }), step.id, input.id);
   }
   steps(input: ComputerTaskId): ComputerTaskStep[] {
     this.get(input);

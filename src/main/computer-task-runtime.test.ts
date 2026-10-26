@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { expect, it, vi } from "vitest";
 import type { ProductToolRequest } from "@shared/contracts";
 import type { ComputerTask, ComputerTaskStart } from "@shared/computer-task-contracts";
@@ -43,8 +43,14 @@ it.each(["api", "native"])("waits for its computer after the queued Journal rece
     expect(repository.listToolInvocations(scope.sessionId).find(value => value.toolCallId === "owned-computer")?.state).toBe("succeeded");
     if (transport === "api") expect(streamClosed).toBe(true);
     await gate.promise;
-    task = repository.computerTasks.update(task!, repository.computerTasks.get(task!).version, { state: "completed", result: "Actual child result" });
-    return { task, steps: [] };
+    const environment = repository.environments.ensure(scope, { workerVersion: "1.3.0", imageRef: "fixture", imageDigest: `sha256:${"a".repeat(64)}`, platform: "linux/arm64" });
+    const bootId = randomUUID(); repository.environments.update(scope, environment.version, { bootId });
+    const content = "Actual child file", path = "child.md", sha256 = createHash("sha256").update(content).digest("hex");
+    const step = repository.computerTasks.beginStep(task!, "execution.readFile", { path });
+    repository.computerTasks.finishStep(task!, { ...step, fileEvidence: { parentRunId: parent, environmentId: environment.id, bootId, imageDigest: environment.imageDigest } }, "completed",
+      { path, content, encoding: "utf8", size: Buffer.byteLength(content), sha256 });
+    task = repository.computerTasks.update(task!, repository.computerTasks.get(task!).version, { state: "completed", result: "Actual child result", outputFiles: [{ stepId: step.id, path }] });
+    return { task, steps: repository.computerTasks.steps(task) };
   });
   const computerTaskService = { start: async (input: ComputerTaskStart, parent: string) => {
     task = repository.computerTasks.create(input, parent, repository.getDefaultModelSelection(), 1).task; return task;
@@ -63,6 +69,7 @@ it.each(["api", "native"])("waits for its computer after the queued Journal rece
     await expect.poll(() => repository.getRuntimeRun(sent.runId).state).toBe("completed");
     const content = transport === "native" ? nativeResponse : received[1]?.findLast(message => message.role === "tool")?.content;
     expect(JSON.parse(content!).result.task).toMatchObject({ id: task!.id, state: "completed", result: "Actual child result" });
+    expect(JSON.parse(content!).fileEvidence).toMatchObject([{ taskId: task!.id, operation: "execution.readFile", path: "child.md", delivered: true }]);
     expect(calls).toBe(transport === "native" ? 1 : 2);
     expect(repository.listToolInvocations(scope.sessionId)).toHaveLength(1);
     expect(JSON.parse(repository.findProductOperationResult(sent.clientNonce, initial.arguments as ProductToolRequest, scope.executorBotId)!).result.state).toBe("queued");

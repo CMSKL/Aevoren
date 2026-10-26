@@ -30,9 +30,11 @@ export interface ComputerToolGateway {
 
 export function createComputerToolGateway(repository: AppRepository, browser: BrowserService, environments: EnvironmentService, applications?: ApplicationService): ComputerToolGateway {
   const browserNames: Record<string, string> = { windows: "computerWindows", focusWindow: "computerFocusWindow", view: "view", screenshot: "computerScreenshot", click: "computerClick", type: "computerType", key: "computerKey", scroll: "computerScroll", move: "computerMove", mouseDown: "computerMouseDown", mouseUp: "computerMouseUp", drag: "computerDrag" };
+  const previewNames: Record<string, string> = { list: "previewList", open: "previewOpen", close: "previewClose" };
   const definitions = [
     ...APPLICATION_PRODUCT_OPERATIONS,
-    ...BROWSER_PRODUCT_OPERATIONS.filter(definition => definition.name.startsWith("browser.") ? !["browser.stop", "browser.download"].includes(definition.name) : definition.name.startsWith("computer.") && Object.hasOwn(browserNames, definition.name.slice(9))),
+    ...BROWSER_PRODUCT_OPERATIONS.filter(definition => definition.name.startsWith("browser.") ? !["browser.stop", "browser.download"].includes(definition.name) :
+      definition.name.startsWith("computer.") && Object.hasOwn(browserNames, definition.name.slice(9)) || definition.name.startsWith("preview.") && Object.hasOwn(previewNames, definition.name.slice(8))),
     ...ENVIRONMENT_PRODUCT_OPERATIONS.filter(definition => /^(execution|processes)\./u.test(definition.name) && !["execution.pickUpload", "execution.downloadFile"].includes(definition.name)),
   ];
   const schemas = { ...APPLICATION_OPERATION_SCHEMAS, ...BROWSER_OPERATION_SCHEMAS, ...ENVIRONMENT_OPERATION_SCHEMAS };
@@ -65,10 +67,11 @@ export function createComputerToolGateway(repository: AppRepository, browser: Br
       const scoped = { ...raw, sessionId: task.sessionId, executorBotId: task.executorBotId };
       const parsed = schemas[operation]!.parse(scoped) as Record<string, unknown>;
       const mutates = !["read-local", "read-remote", "pure"].includes(definition.effectClass);
-      const command = mutates ? { ...parsed, clientNonce: stepId } : parsed;
+      const usesNonce = !/^(execution|processes)\./u.test(operation) || ["execution.run", "processes.start"].includes(operation);
+      const command = mutates && usesNonce ? { ...parsed, clientNonce: stepId } : parsed;
       let result: unknown;
-      if (operation.startsWith("browser.") || operation.startsWith("computer.")) {
-        const method = operation.startsWith("browser.") ? operation.slice(8) : browserNames[operation.slice(9)]!;
+      if (operation.startsWith("browser.") || operation.startsWith("computer.") || operation.startsWith("preview.")) {
+        const method = operation.startsWith("browser.") ? operation.slice(8) : operation.startsWith("preview.") ? previewNames[operation.slice(8)]! : browserNames[operation.slice(9)]!;
         const invoke = (browser as unknown as Record<string, (input: unknown, context: BrowserCallContext) => Promise<unknown>>)[method]!;
         result = await invoke.call(browser, command, { actor: "ai", signal, operationId: stepId });
       } else if (operation.startsWith("applications.")) {

@@ -61,6 +61,42 @@ afterEach(async () => { for (const item of fixtures.splice(0)) { await item.work
 const call = (operation: string, input?: unknown): ProductToolRequest => ({ kind: "product-call", action: "execute", operation, ...(input === undefined ? {} : { input }) });
 
 describe("resource measurement receipts", () => {
+  it.each([{ transport: "api", action: "describe" }, { transport: "native", action: "describe" }, { transport: "api", action: "execute" }, { transport: "native", action: "execute" }] as const)("corrects a product-wrapped standalone tool using its real schema ($transport/$action)", async ({ transport, action }) => {
+    let calls = 0, nativeResponse: string | undefined;
+    const replies: string[] = [];
+    const provider: ModelProvider = {
+      testConnection: async () => {},
+      async *run(messages) {
+        yield { type: "started", requestId: `wrong-tool-${++calls}` };
+        if (calls === 1) {
+          yield { type: "project-tool", toolCallId: "wrong-entry", tool: { kind: "product-call", action, operation: "text_measure" },
+            ...(transport === "native" ? { toolSignal: new AbortController().signal, respond: async (content: string) => { nativeResponse = content; } } : {}) };
+          if (transport === "api") { yield { type: "completed", finishReason: "tool_calls" }; return; }
+        }
+        if (calls <= 2) {
+          replies.push(nativeResponse ?? messages.findLast(message => message.role === "tool")?.content ?? "");
+          yield { type: "computation-tool", toolCallId: "actual-measure", tool: { kind: "text-measure", text: "正文" },
+            ...(transport === "native" ? { toolSignal: new AbortController().signal, respond: async () => {} } : {}) };
+          if (transport === "api") { yield { type: "completed", finishReason: "tool_calls" }; return; }
+        }
+        yield { type: "delta", text: "已完成文字计数。" };
+        yield { type: "completed", finishReason: "stop" };
+      },
+    };
+    const f = fixture(provider), actor = f.repository.createBot();
+    const sent = f.worker.send({ sessionId: actor.session.id, clientNonce: crypto.randomUUID(), text: "请用 text_measure 测量正文。" });
+    await expect.poll(() => ["completed", "failed"].includes(f.repository.getRuntimeRun(sent.runId).state)).toBe(true);
+    expect(f.repository.getRuntimeRun(sent.runId)).toMatchObject({ state: "completed", lastErrorCode: null });
+    expect(JSON.parse(replies[0]!)).toMatchObject({ ok: false, recovery: { toolName: "text_measure", inputSchema: { required: ["text"] } } });
+    expect(replies[0]).toContain("独立工具");
+    const invocations = f.repository.listToolInvocations(actor.session.id);
+    expect(invocations.filter(tool => tool.toolKind === "text-measure")).toHaveLength(1);
+    const wrongEntry = invocations.find(tool => tool.toolCallId === "wrong-entry");
+    // execute rejects the wrapped call before it is recorded, describe records the failure; neither may look successful.
+    expect(wrongEntry?.state ?? "rejected-before-record").not.toBe("succeeded");
+    if (action === "describe") expect(wrongEntry).toMatchObject({ state: "failed" });
+  });
+
   it("finishes the prohibited-action diagnostic after a real empty browser status, without writes or input", async () => {
     let calls = 0;
     const provider: ModelProvider = {
@@ -116,6 +152,7 @@ describe("resource measurement receipts", () => {
     truncated?: boolean; both?: boolean; request?: string; measure?: boolean; delayBeforeReplyMs?: number;
   }>([
     { name: "actual S4 negated execution list", request: "S4：每位成员只做资料装载验收，不执行研究、创建文件或电脑操作。使用真实 documents.read 读取产品事实；再使用 skills.load 加载与你角色同名的执行规范。只回显各自实际读取的 resourceId、revisionId、fullLength 及一句职责，不作任何正文计数。", both: true, reply: "revision $revision：$operation 成功，fullLength $length。", code: null },
+    { name: "actual S4 no-count output prohibition", request: "请读取本群资料并加载规范，然后一行职责，不复述规范未来动作，不输出自行计算字数。", both: true, reply: "revision $revision：$operation 成功，fullLength $length。", code: null },
     { name: "N1 original request", request: "读取绑定资料，这些长度只引用读取返回的 fullLength，不重新计算文本。", reply: "revision $revision：$operation 成功，$length 字符。", code: null },
     { name: "N1 actual S4 read receipt follow-up", request: "请本次实际重新 documents.read 读取产品事实。只回显实际resourceId、revisionId、fullLength及职责，明确纠正原回复。长度仅引用读取回执，不重新统计正文；不研究、不创建文件、不操作电脑。", reply: "revision $revision：$operation 成功，fullLength $length。", code: null },
     { name: "colon field", reply: "revision $revision：fullLength: $length。", code: null },
@@ -160,6 +197,8 @@ describe("resource measurement receipts", () => {
     { name: "explicit measurement required", request: "请读取资料后用 text_measure 精确计算字数。", reply: "revision $revision：$operation 成功，$length 字符。", code: "TASK_REQUIREMENTS_UNMET" },
     { name: "actual text measurement", measure: true, reply: "revision $revision：$operation 成功，$length 字符；文本有 2 个非空白字符。", code: null },
     { name: "ordinary reply", reply: "资料已就绪。", code: null },
+    { name: "application-owned document read claim", reply: "已读取文件内容，以下结论依据这次返回的资料。", code: null },
+    { name: "loaded Skill file read claim", kind: "skill", reply: "已读取文件内容，执行规范已加载。", code: null },
   ])("binds resource length claims: $name", async ({ reply, code, kind = "document", content = "a".repeat(17), reading, truncated, both, request, measure, delayBeforeReplyMs }) => {
     let calls = 0;
     const operation = kind === "skill" ? "skills.load" : "documents.read";
@@ -211,6 +250,17 @@ describe("resource measurement receipts", () => {
     const result = await f.execute(call("computer.screenshot", { expectedEpoch: 1 }));
     expect(f.repository.getToolInvocation(result.invocation.id).resultMetadata).toMatchObject({ measurementResource: media.id, measurementBytes: 51648, measurementDigest: media.sha256 });
     expect(JSON.stringify(f.repository.getToolInvocation(result.invocation.id).resultMetadata)).not.toContain("base64");
+  });
+
+  it("retains the verified isolated write path, digest and byte size", async () => {
+    const f = fixture();
+    const file = { path: "report.md", size: 8, sha256: "b".repeat(64), created: true };
+    f.dependencies.environmentService = { writeFile: async () => file } as unknown as EnvironmentService;
+    const result = await f.execute(call("execution.writeFile", { path: file.path, content: "evidence" }));
+    expect(JSON.parse(result.content)).toMatchObject({ ok: true, status: "completed", result: file });
+    expect(f.repository.getToolInvocation(result.invocation.id).resultMetadata).toMatchObject({
+      status: "completed", operation: "execution.writeFile", measurementResource: file.path, measurementBytes: file.size, measurementDigest: file.sha256,
+    });
   });
 
   it("retains the exact document revision and fullLength instead of measuring the truncated page", async () => {

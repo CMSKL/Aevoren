@@ -1,3 +1,4 @@
+import { computerFileEvidence } from "./computer-file-evidence";
 import { ApplicationRepository } from "./application-repository";
 import { ComputerTaskRepository, COMPUTER_TASK_MIGRATION, COMPUTER_TASK_COMPATIBILITY_MIGRATION, restoreComputerObservationColumns } from "./computer-task-repository";
 import { McpWriteRepository, MCP_WRITE_MIGRATION } from "./mcp-write-repository";
@@ -3285,7 +3286,7 @@ export class AppRepository {
       if (filename !== ":memory:") this.database.exec("PRAGMA journal_mode = WAL;");
       this.migrate();
       this.applications = new ApplicationRepository(this.database, scope => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
-      this.computerTasks = new ComputerTaskRepository(this.database, scope => this.assertSessionExecutor(scope.sessionId, scope.executorBotId));
+      this.computerTasks = new ComputerTaskRepository(this.database, scope => this.assertSessionExecutor(scope.sessionId, scope.executorBotId), () => this.nextFileEvidenceOrdinal());
       this.library = new LibraryRepository(this.database, (sessionId, executorBotId) => {
         const session = this.getSession(sessionId);
         if (executorBotId) this.assertSessionExecutor(sessionId, executorBotId);
@@ -4327,6 +4328,14 @@ export class AppRepository {
       });
     }
     return this.getWorkspace(id, true);
+  }
+
+  nextFileEvidenceOrdinal(): number {
+    const row = this.database.prepare(`INSERT INTO app_settings(key, value, encrypted, updated_at)
+      VALUES ('computer.fileEvidenceOrdinal', '1', 0, ?)
+      ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1, updated_at = excluded.updated_at
+      RETURNING value`).get(now()) as { value: string };
+    return Number(row.value);
   }
 
   commitProductMutation<T>(id: string, operation: () => T, receipt: (result: T) => { content: string; metadata: Record<string, string | number | boolean | null> }): T {
@@ -6388,6 +6397,7 @@ export class AppRepository {
         let body = "";
         let assistantEntryId: string | null = null;
         const artifacts: RoomRunSummary["results"][number]["artifacts"] = [];
+        const computerFiles: NonNullable<RoomRunSummary["results"][number]["computerFiles"]> = [];
         const tools: NonNullable<RoomRunSummary["results"][number]["tools"]> = [];
         if (turn.runtimeRunId) {
           try {
@@ -6409,7 +6419,11 @@ export class AppRepository {
               body = source.assistant.body;
               assistantEntryId = source.assistant.id;
             }
-            tools.push(...succeeded.map((invocation) => ({ kind: invocation.toolKind, resultDigest: invocation.resultDigest! })));
+            computerFiles.push(...computerFileEvidence(this, runtime.id));
+            tools.push(...succeeded.map((invocation) => ({ kind: invocation.toolKind, resultDigest: invocation.resultDigest!,
+              ...(invocation.arguments.kind === "product-call" && invocation.arguments.action === "execute" ? { operation: invocation.arguments.operation } : {}),
+              ...(typeof invocation.resultMetadata?.status === "string" ? { status: invocation.resultMetadata.status } : {}),
+            })));
             for (const invocation of invocations) {
               if (invocation.runtimeRunId !== turn.runtimeRunId || invocation.toolKind !== "workspace-write" || invocation.state !== "succeeded") continue;
               try {
@@ -6426,7 +6440,7 @@ export class AppRepository {
         return {
           turnId: turn.id, logicalTurnId: turn.logicalTurnId, agentId: turn.agentId, agentName: turn.memberNameSnapshot,
           turnPurpose: turn.turnPurpose === "coordinate" ? "coordinate" : "work", state: turn.state,
-          errorCode: turn.lastErrorCode, outcome: turn.outcome, body, assistantEntryId, artifacts, tools,
+          errorCode: turn.lastErrorCode, outcome: turn.outcome, body, assistantEntryId, artifacts, tools, computerFiles,
         };
       }),
     };

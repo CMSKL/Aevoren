@@ -19,8 +19,10 @@ function safeRelativePath(path: string): boolean {
     && Array.from(path).every((character) => character.charCodeAt(0) > 31 && character.charCodeAt(0) !== 127)
     && path.split("/").every((part) => part.length > 0 && part !== "." && part !== ".." && new TextEncoder().encode(part).length <= 255);
 }
-export const environmentFilePathSchema = z.string().min(1).max(1_024).refine(safeRelativePath, "Use a relative POSIX file path without unsafe segments");
-export const environmentDirectoryPathSchema = z.string().min(1).max(1_024).refine((path) => path === "." || safeRelativePath(path), "Use '.' or a relative POSIX directory path");
+export const environmentFilePathSchema = z.string().min(1).max(1_024).refine(safeRelativePath, "Use a relative POSIX file path without unsafe segments")
+  .describe("POSIX file path relative to this isolated environment's /workspace, for example visual/cover.png. Do not include /workspace or a host filesystem path.");
+export const environmentDirectoryPathSchema = z.string().min(1).max(1_024).refine((path) => path === "." || safeRelativePath(path), "Use '.' or a relative POSIX directory path")
+  .describe("Directory relative to this isolated environment's /workspace. Use '.' or omit cwd for the root; do not pass '/workspace' as cwd.");
 export const executionCommandSchema = z.string().min(1).max(ENV_COMMAND_MAX_BYTES)
   .refine((command) => command.trim().length > 0 && !command.includes("\0") && new TextEncoder().encode(command).length <= ENV_COMMAND_MAX_BYTES, "Command exceeds 64 KiB or is empty/invalid");
 const timeoutMs = z.number().int().min(1).max(ENV_EXECUTION_MAX_TIMEOUT_MS);

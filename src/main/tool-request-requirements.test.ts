@@ -14,6 +14,15 @@ describe("negative execution lists from the real S4 request", () => {
     expect(requestsExactMeasurement("回显 fullLength，不作任何正文字符数统计。")).toBe(false);
     expect(requestsExactMeasurement("回显 fullLength，不重新计算正文的字符数。")).toBe(false);
   });
+  it("does not turn the real S4 no-count output instruction into a count requirement", () => {
+    expect(requestsExactMeasurement("然后一行职责，不复述规范未来动作，不输出自行计算字数。")).toBe(false);
+    expect(requestsExactMeasurement("不输出正文字符数、也不输出自行计算的长度。")).toBe(false);
+    expect(requestsExactMeasurement("不报告fullLength或任何正文长度。")).toBe(false);
+    expect(requestsExactMeasurement("最后报告任务ID与观察状态，不自行估计字数或字节数。")).toBe(false);
+    expect(requestsExactMeasurement("不估字数或字节数。")).toBe(false);
+    expect(requestsExactMeasurement("请报告正文长度。")).toBe(true);
+    expect(requestsExactMeasurement("不输出自行计算字数，但请用 text_measure 统计正文长度。")).toBe(true);
+  });
   it("quotes a read receipt's length without requesting an independent count", () => {
     expect(requestsExactMeasurement("只回显 fullLength。长度仅引用读取回执，不重新统计正文。")).toBe(false);
     expect(requestsExactMeasurement("回显读取回执的长度，不重新计算文本。")).toBe(false);

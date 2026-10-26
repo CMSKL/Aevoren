@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import type { ModelEvent, ModelProvider, ChatMessage } from "./model";
@@ -291,6 +291,45 @@ function parentRun(f: ReturnType<typeof fixture>, scope = f.scope) {
   const run = f.repository.createRuntimeRun(nonce, "fake", { schemaVersion: 1, botId: scope.executorBotId, profileVersion: 1, sessionId: scope.sessionId, generation: 1, inputSeq: 1, blocks: [], digest: "owned-parent" });
   f.repository.transitionRuntimeRun(run.id, "dispatching"); return f.repository.transitionRuntimeRun(run.id, "running", { providerRequestId: randomUUID() });
 }
+
+it.each(["valid", "no-parent", "wrong-step", "wrong-path", "old-boot", "write-reference"])("validates file delivery references through the actual task loop: %s", async mode => {
+  const content = "Actual fixture bytes", sha256 = createHash("sha256").update(content).digest("hex");
+  const path = "result.md"; let round = 0, finishReply: string | undefined;
+  const f = fixture(scripted(async messages => {
+    switch (round++) {
+      case 0: return [event("computer.screenshot", {})];
+      case 1: return [event("execution.writeFile", { path, content })];
+      case 2: return [event("execution.readFile", { path })];
+      case 3: {
+        const reply = JSON.parse(messages.findLast(message => message.role === "tool")!.content) as { fileEvidence: Array<{ stepId: string; operation: string }> };
+        expect(reply.fileEvidence).toHaveLength(2);
+        const file = reply.fileEvidence.find(file => file.operation === (mode === "write-reference" ? "execution.writeFile" : "execution.readFile"))!;
+        if (mode === "old-boot") {
+          const environment = f.repository.environments.getInternal(f.scope)!;
+          f.repository.environments.update(f.scope, environment.version, { bootId: randomUUID() });
+        }
+        return [event("computer.task.finish", { status: "completed", summary: "Verified file", observationId: observation(messages),
+          outputFiles: [{ stepId: mode === "wrong-step" ? randomUUID() : file.stepId, path: mode === "wrong-path" ? "other.md" : path }] })];
+      }
+      default: finishReply = messages.findLast(message => message.role === "tool")!.content; return [];
+    }
+  }));
+  f.gateway.definitions = [...f.gateway.definitions, ...["execution.writeFile", "execution.readFile"].map(name => ({ name, channel: name, description: "Controlled file fixture", effectClass: name.endsWith("readFile") ? "read-local" as const : "write-reversible" as const, interaction: "none" as const }))];
+  f.gateway.schemas = { ...f.gateway.schemas, "execution.readFile": z.object({ path: z.string() }), "execution.writeFile": z.object({ path: z.string(), content: z.string() }) };
+  const environment = f.repository.environments.ensure(f.scope, { workerVersion: "1.3.0", imageRef: "fixture", imageDigest: `sha256:${"a".repeat(64)}`, platform: "linux/arm64" });
+  const bootId = randomUUID(); f.repository.environments.update(f.scope, environment.version, { bootId });
+  vi.mocked(f.gateway.execute).mockImplementation(async (_task, operation) => operation === "execution.readFile"
+    ? { result: { path, size: Buffer.byteLength(content), sha256, content, encoding: "utf8" } }
+    : operation === "execution.writeFile" ? { ...frame(), result: { action: { path, size: Buffer.byteLength(content), sha256 } } } : frame());
+  const parent = mode === "no-parent" ? null : parentRun(f), accepted = mode === "valid" || mode === "no-parent";
+  const task = await f.service.start({ ...f.scope, goal: "Save and deliver file", clientNonce: randomUUID() }, parent?.id ?? null);
+  await expect.poll(() => f.repository.computerTasks.get(task).state).toBe(accepted ? "completed" : "paused");
+  const detail = f.service.get({ ...f.scope, id: task.id }), fileSteps = detail.steps.filter(step => step.operation.startsWith("execution."));
+  expect(fileSteps).toHaveLength(2);
+  expect(fileSteps.every(step => step.fileEvidence?.parentRunId === (parent?.id ?? null) && step.fileEvidence.bootId === bootId)).toBe(true);
+  if (accepted) expect(detail.task.outputFiles).toEqual([{ stepId: fileSteps[1]!.id, path }]);
+  else { expect(detail.task.outputFiles ?? []).toEqual([]); expect(JSON.parse(finishReply!)).toMatchObject({ ok: false, code: "TOOL_EVIDENCE_REQUIRED" }); }
+});
 
 it("hands off an already completed child only to its own parent, without replay", async () => {
   const f = fixture(scripted(completedRun)), parent = parentRun(f);

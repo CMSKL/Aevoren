@@ -1,3 +1,4 @@
+import { computerFileEvidence } from "./computer-file-evidence";
 import { mcpWriteIdSchema } from "@shared/mcp-write-schemas";
 import { MCP_WRITE_PRODUCT_OPERATIONS } from "@shared/mcp-write-product";
 import { nativeOutboundIdSchema } from "@shared/native-outbound-schemas";
@@ -82,7 +83,8 @@ export class ProductOperationService {
     signal.throwIfAborted();
     return JSON.stringify({ ok: true, operation: tool.operation,
       status: detail.controlBlocked || ["waiting_user", "paused", "interrupted"].includes(detail.task.state) ? "waiting_user" : detail.task.state,
-      result: detail, receiptNotice: detail.waitExpired ? "宿主等待达到30分钟，已停止本父任务所属的电脑任务；请核对实际步骤及未知结果，不自动重放。" : "电脑任务实际状态交接；初始委派回执保持不变。" });
+      result: detail, fileEvidence: detail.controlBlocked ? [] : computerFileEvidence(this.dependencies.repository, runtime.id).filter(file => file.taskId === detail.task.id),
+      receiptNotice: detail.waitExpired ? "宿主等待达到30分钟，已停止本父任务所属的电脑任务；请核对实际步骤及未知结果，不自动重放。" : "电脑任务实际状态交接；初始委派回执保持不变。文件证据逐项绑定任务、步骤与环境，任务状态本身不证明交付完成。" });
   }
 
   preview(tool: ProductToolRequest): string {
@@ -468,6 +470,16 @@ export class ProductOperationService {
         if (botId === runtime.executorBotId || session.roomId && this.dependencies.repository.listRoomMembers(session.roomId).some((member) => member.bot.id === botId)) memorySourceEntryId = this.dependencies.repository.getUserMessage(runtime.clientNonce).id;
       }
     }
+    const fileOperation = ["execution.readFile", "execution.writeFile"].includes(tool.operation);
+    let fileMetadata: Record<string, string | number | boolean | null> | undefined;
+    const fileReceiptMetadata = (): Record<string, string | number | boolean | null> => {
+      if (!fileOperation) return {};
+      if (fileMetadata) return fileMetadata;
+      const environment = this.dependencies.repository.environments.getInternal(runtime);
+      if (!environment?.bootId) return fileMetadata = {};
+      return fileMetadata = { fileEnvironmentId: environment.id, fileBootId: environment.bootId, fileImageDigest: environment.imageDigest,
+        fileEvidenceOrdinal: this.dependencies.repository.nextFileEvidenceOrdinal() };
+    };
     const scopedHandlers = createProductHandlers(this.dependencies, (operation) => this.dependencies.repository.commitProductMutation(invocation.id, () => {
       signal.throwIfAborted();
       this.validate(tool, invocation.runtimeRunId);
@@ -480,11 +492,11 @@ export class ProductOperationService {
         created.bot = this.dependencies.repository.updateBot(created.bot.id, created.bot.version, { modelSelection: creator.modelSelection, mcpServerIds: creator.mcpServerIds, memoryWorkspaceIds: [] });
       }
       return value;
-    }, (result) => ({
-      ...this.result({ status: result === null && definition.interaction === "native" ? "cancelled" :
-        ["execution.run", "processes.start", "computer.tasks.start", "computer.tasks.resume", "applications.install"].includes(tool.operation) && ["queued", "running", "building", "pending"].includes((result as { state?: string } | null)?.state ?? "") ? "running" : "completed", operation: tool.operation, result: tool.operation === "userProfile.update" ? { name: (result as import("@shared/contracts").UserProfile).name, hasAvatar: Boolean((result as import("@shared/contracts").UserProfile).avatarUrl) } : result ?? null }),
-      metadata: { operation: tool.operation, resourceCount: createdCount },
-    })), memorySourceEntryId, { runtimeRunId: runtime.id, executorBotId: runtime.executorBotId, sessionId: runtime.sessionId, signal });
+    }, (result) => {
+      const receipt = this.result({ status: result === null && definition.interaction === "native" ? "cancelled" :
+        ["execution.run", "processes.start", "computer.tasks.start", "computer.tasks.resume", "applications.install"].includes(tool.operation) && ["queued", "running", "building", "pending"].includes((result as { state?: string } | null)?.state ?? "") ? "running" : "completed", operation: tool.operation, result: tool.operation === "userProfile.update" ? { name: (result as import("@shared/contracts").UserProfile).name, hasAvatar: Boolean((result as import("@shared/contracts").UserProfile).avatarUrl) } : result ?? null });
+      return { ...receipt, metadata: { ...receipt.metadata, ...fileReceiptMetadata(), resourceCount: createdCount } };
+    }), memorySourceEntryId, { runtimeRunId: runtime.id, executorBotId: runtime.executorBotId, sessionId: runtime.sessionId, signal });
     let result = await scopedHandlers.get(definition.channel)!(input);
     if ((environmentOperation(tool.operation) || scriptOperation(tool.operation) || tool.operation.startsWith("applications.")) && this.dependencies.repository.browsers.view(runtime)?.owner === "user") throw new AevorenBotError("COMPUTER_USER_CONTROLLED");
     if (tool.operation === "mcp.openApp") return this.result({ ...result as { status: string; reason: string }, operation: tool.operation });
@@ -520,7 +532,7 @@ export class ProductOperationService {
     if (definition.effectClass === "write-reversible" || definition.effectClass === "irreversible") this.dependencies.productChanged?.();
     const output = this.result({ status: result && typeof result === "object" && "status" in result && result.status === "waiting_user" ? "waiting_user" : result === null && definition.interaction === "native" ? "cancelled" :
       ["execution.run", "processes.start", "computer.tasks.start", "computer.tasks.resume", "applications.install"].includes(tool.operation) && ["queued", "running", "building", "pending"].includes((result as { state?: string } | null)?.state ?? "") ? "running" : "completed", operation: tool.operation, result: result ?? null });
-    return { ...output, ...(images ? { images } : {}) };
+    return { ...output, metadata: { ...output.metadata, ...fileReceiptMetadata() }, ...(images ? { images } : {}) };
   }
 
   private result(value: unknown) {
@@ -529,7 +541,7 @@ export class ProductOperationService {
     const result = receipt.result as { media?: import("@shared/browser-contracts").ScreenshotMedia; feedback?: { media?: import("@shared/browser-contracts").ScreenshotMedia }; resource?: { id: string }; revision?: { id: string }; path?: string; relativePath?: string; fullLength?: number; size?: number; sha256?: string; digest?: string; truncated?: boolean } | undefined;
     const media = result?.media ?? result?.feedback?.media;
     const resource = media?.id ?? result?.revision?.id ?? result?.path ?? result?.relativePath;
-    const readable = /^(?:computer\.screenshot|computer\.(?:click|type|key|scroll|move|mouseDown|mouseUp|drag|focusWindow)|browser\.(?:navigate|newTab|click|type|key|scroll)|execution\.readFile|(?:documents|skills|library)\.(?:read|load|readFile))$/u.test(receipt.operation ?? "");
+    const readable = /^(?:computer\.screenshot|computer\.(?:click|type|key|scroll|move|mouseDown|mouseUp|drag|focusWindow)|browser\.(?:navigate|newTab|click|type|key|scroll)|execution\.(?:readFile|writeFile)|(?:documents|skills|library)\.(?:read|load|readFile))$/u.test(receipt.operation ?? "");
     return { content, metadata: { status: receipt.status ?? "completed", ...(receipt.operation ? { operation: receipt.operation } : {}), ...(receipt.result?.runId ? { targetRunId: receipt.result.runId } : {}), ...(receipt.result?.state ? { taskState: receipt.result.state } : {}),
       ...(readable && resource ? { measurementResource: resource, ...(media?.size !== undefined || result?.size !== undefined ? { measurementBytes: media?.size ?? result!.size! } : {}),
         ...(result?.fullLength !== undefined ? { measurementCharacters: result.fullLength } : {}), ...(result?.truncated !== undefined ? { truncated: result.truncated } : {}),

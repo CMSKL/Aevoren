@@ -612,6 +612,33 @@ describe("buildPrompt", () => {
     expect(JSON.stringify(projected)).not.toContain("UNKNOWN_INTERNAL_ERROR");
   });
 
+  it("reports verified Library writes even when the member reply fails, without treating queued tasks or cancelled writes as complete", () => {
+    const projected = projectRoomSummary({
+      ...roomRunSummary, coordinationErrorCode: null,
+      results: [{ ...roomRunSummary.results[0]!, state: "failed", errorCode: "TOOL_EVIDENCE_REQUIRED", artifacts: [], body: "untrusted failed content",
+        tools: [
+          { kind: "product-call", operation: "documents.read", status: "completed", resultDigest: "a".repeat(64) },
+          { kind: "product-call", operation: "documents.create", status: "completed", resultDigest: "b".repeat(64) },
+          { kind: "product-call", operation: "execution.writeFile", status: "cancelled", resultDigest: "c".repeat(64) },
+          { kind: "product-call", operation: "execution.run", status: "running", resultDigest: "d".repeat(64) },
+        ] }],
+    });
+    expect(projected.results[0]).toMatchObject({ status: "未完成", verifiedActions: ["已读取资料库文档", "已保存资料库草稿"], files: [] });
+    expect(projected.results[0]).not.toHaveProperty("memberResponse");
+    expect(JSON.stringify(projected)).not.toContain("untrusted failed content");
+    expect(JSON.stringify(projected)).not.toContain("documents.create");
+  });
+
+  it("shows verified computer files while retaining the member's failed state", () => {
+    const projected = projectRoomSummary({ ...roomRunSummary, coordinationErrorCode: null,
+      results: [{ ...roomRunSummary.results[0]!, state: "failed", artifacts: [], tools: [], body: "Everything is complete",
+        computerFiles: [{ taskId: "child", stepId: "read", segment: 1, taskVersion: 5, environmentId: "environment", bootId: "boot", imageDigest: `sha256:${"a".repeat(64)}`,
+          operation: "execution.readFile", path: "visual/cover.png", sha256: "b".repeat(64), bytes: 20, ordinal: 1, delivered: true }] }] });
+    expect(projected.results[0]).toMatchObject({ status: "未完成", verifiedActions: ["已读取隔离电脑文件", "已交付隔离电脑文件"],
+      files: [{ path: "visual/cover.png", createdBy: "作者", status: "已保存" }] });
+    expect(projected.results[0]).not.toHaveProperty("memberResponse");
+  });
+
   it("allows verified team reads and writes to be reported as complete without a diagnostic table or disclaimer", () => {
     const summary: RoomRunSummary = {
       ...roomRunSummary, coordinationErrorCode: null,

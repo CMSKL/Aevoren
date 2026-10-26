@@ -9,9 +9,18 @@ export type ComputerTask = BrowserScope & {
   hostTarget?: import("./host-computer-targets").HostComputerTarget;
   modelSelection: ModelSelection; providerVersion: number; segment: number; actionCount: number;
   result: string | null; errorCode: string | null; createdAt: string; updatedAt: string;
+  outputFiles?: Array<{ stepId: string; path: string }>;
+};
+export type ComputerFileIdentity = { parentRunId: string | null; environmentId: string; bootId: string; imageDigest: string };
+export type EnvironmentFileEvidence = Omit<ComputerFileIdentity, "parentRunId"> & {
+  operation: "execution.readFile" | "execution.writeFile"; path: string; sha256: string; bytes: number; ordinal: number;
+};
+export type ComputerFileEvidence = EnvironmentFileEvidence & {
+  taskId: string; stepId: string; segment: number; taskVersion: number; delivered: boolean;
 };
 export type ComputerTaskStep = { id: string; taskId: string; segment: number; operation: string;
-  input: unknown; state: "started" | "completed" | "failed" | "unknown"; result: unknown; createdAt: string };
+  input: unknown; state: "started" | "completed" | "failed" | "unknown"; result: unknown; createdAt: string;
+  fileEvidence?: ComputerFileIdentity; fileEvidenceOrdinal?: number };
 export type ComputerTaskDetail = { task: ComputerTask; steps: ComputerTaskStep[] };
 export type ComputerTaskStart = BrowserScope & { goal: string; clientNonce: string; target?: import("./host-computer-contracts").ComputerTarget };
 export type ComputerTaskId = BrowserScope & { id: string };

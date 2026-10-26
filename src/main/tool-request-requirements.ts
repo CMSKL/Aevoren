@@ -8,7 +8,7 @@ export function positiveToolRequestText(text: string): string {
     // A comma inside a prohibited list keeps the prohibition; an explicit new request ends it.
     sentence = sentence.replace(/但是|[但并](?=请|需要|必须|先|重新|实际|真实|已|成功|完成)|而是|\b(?:but|however|instead|and(?=\s+please\b))\b|[，,](?=\s*(?:请|还要|只(?:读取|创建|保存|写入)))/giu, "；");
     return sentence.split("；").map(clause => clause.replace(
-      /(?:不要|不得|禁止|无需|无须|不需要|不允许|不必|不能|未要求|拒绝|取消|不(?=(?:再|重新)?(?:执行|进行|做|作|调用|使用|读取|读入|打开|解析|列出|搜索|抓取|访问|核验|保存|写入|创建|新建|组建|生成|计算|统计|联网|发布))|别(?=再?(?:用|使用|读取|写入|打开))|\b(?:do\s+not|don't|must\s+not|never|no\s+need\s+to|without|avoid)\b)[\s\S]*/iu,
+      /(?:不要|不得|禁止|无需|无须|不需要|不允许|不必|不能|未要求|拒绝|取消|不(?=(?:再|重新|自行)?(?:执行|进行|做|作|调用|使用|读取|读入|打开|解析|列出|搜索|抓取|访问|核验|保存|写入|创建|新建|组建|生成|输出|报告|估计|估|计算|统计|联网|发布))|别(?=再?(?:用|使用|读取|写入|打开))|\b(?:do\s+not|don't|must\s+not|never|no\s+need\s+to|without|avoid)\b)[\s\S]*/iu,
       " ",
     )).join("；");
   }).join("");

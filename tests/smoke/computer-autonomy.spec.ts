@@ -1,3 +1,4 @@
+import { captureElectron } from "./electron-screenshot";
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -114,7 +115,7 @@ async function removeOwnedComputers(directory: string): Promise<void> {
 
 // This fixture measures local IPC, settings, real image bytes and the API
 // protocol against a simulated model. It is not real-model or package evidence.
-async function withComputer(callback: (fixture: Fixture) => Promise<void>): Promise<void> {
+async function withComputer(callback: (fixture: Fixture) => Promise<void>, respond?: (command: WireRequest, response: ServerResponse) => boolean): Promise<void> {
   const directory = mkdtempSync(join(tmpdir(), "aevoren-computer-autonomy-"));
   const repository = new AppRepository(join(directory, "aevoren-bot.sqlite"));
   const created = repository.createBot();
@@ -132,6 +133,7 @@ async function withComputer(callback: (fixture: Fixture) => Promise<void>): Prom
       let body = ""; for await (const chunk of request) body += chunk;
       const command = JSON.parse(body) as WireRequest;
       const probe = command.messages.some(message => typeof message.content === "string" && message.content.includes("isolated visual and host-tool check"));
+      if (!probe && respond?.(command, response)) return;
       const images = command.messages.flatMap(message => Array.isArray(message.content) ? message.content as { type: string; image_url?: { url: string } }[] : []).filter(part => part.type === "image_url");
       const call = (operation: string, input: unknown): void => stream(response, { tool_calls: [{ index: 0, id: randomUUID(), type: "function", function: { name: "product_execute", arguments: JSON.stringify({ operation, input }) } }] }, "tool_calls");
       if (probe && !images.length) {
@@ -274,6 +276,69 @@ test("computer verification sends real PNG pixels and rejects an incorrect simul
     const rejected = await f.page.evaluate(() => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.computerModel.test());
     expect(rejected.ok).toBe(false); if (!rejected.ok) expect(rejected.error.code).toBe("COMPUTER_MODEL_UNSUPPORTED");
     expect(f.captures.filter(capture => capture.imageBytes > 0)).toHaveLength(2); expect(f.captures.filter(capture => capture.imageBytes > 0).every(capture => capture.probe && capture.answer?.split(",").length === 3)).toBe(true);
+  });
+});
+
+test("hands a real child file to its parent and recovers a wrong tool entry without replaying the write", async () => {
+  test.skip(process.env.AEVOREN_DOCKER_INTEGRATION !== "1" || process.env.AEVOREN_BROWSER_INTEGRATION !== "1", "Requires real Docker execution and desktop workers; only the local model is scripted.");
+  test.setTimeout(240_000);
+  const path = "result.md", content = "Real isolated computer file\n", digest = createHash("sha256").update(content).digest("hex");
+  const observed: { missing?: unknown; files?: unknown; correction?: unknown } = {};
+  await withComputer(async f => {
+    const configuration = value(await f.page.evaluate(() => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.computerModel.get()));
+    value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.computerModel.save(input), { expectedVersion: configuration.version, selection: { ...f.original, modelId: "controlled-computer-good" } }));
+    await f.page.getByRole("listitem", { name: "独立电脑模型验收", exact: true }).click();
+    await f.page.getByLabel("消息", { exact: true }).fill("请保存 result.md，保存后回读。使用电脑任务完成，再用 text_measure 测量正文，简短报告结果。");
+    await f.page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect.poll(async () => value(await f.page.evaluate(sessionId => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.runtime.getSessionSnapshot(sessionId), f.scope.sessionId)).runs[0]?.state,
+      { timeout: 180_000 }).toMatch(/^(completed|failed)$/u);
+    const snapshot = value(await f.page.evaluate(sessionId => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.runtime.getSessionSnapshot(sessionId), f.scope.sessionId));
+    const tasks = value(await f.page.evaluate(scope => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.computerTasks.list(scope), f.scope));
+    await evidence("child-file-runtime-state", { snapshot, tasks, observed, details: await Promise.all(tasks.map(task => f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.computerTasks.get(input), { ...f.scope, id: task.id }))) });
+    expect(snapshot.runs[0]).toMatchObject({ state: "completed", lastErrorCode: null });
+    expect(tasks).toHaveLength(1);
+    const detail = value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.computerTasks.get(input), { ...f.scope, id: tasks[0]!.id }));
+    expect(detail.task).toMatchObject({ state: "completed", parentRunId: snapshot.runs[0]!.id });
+    expect(detail.steps.filter(step => step.operation === "execution.writeFile")).toHaveLength(1);
+    const actual = value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.execution.readFile(input), { ...f.scope, path }));
+    expect(actual).toMatchObject({ path, content, sha256: digest, size: Buffer.byteLength(content) });
+    const conflict = await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.execution.writeFile(input), { ...f.scope, path, content: "Must not overwrite" });
+    expect(conflict).toMatchObject({ ok: false, error: { code: "ENVIRONMENT_FILE_CONFLICT" } });
+    expect(value(await f.page.evaluate(input => (window as unknown as { aevorenBot: AevorenBotApi }).aevorenBot.execution.readFile(input), { ...f.scope, path })).sha256).toBe(digest);
+    expect(observed.missing).toMatchObject({ ok: false, code: "ENVIRONMENT_FILE_NOT_FOUND" });
+    expect(observed.files).toMatchObject([{ operation: "execution.readFile", path, sha256: digest, delivered: true }]);
+    expect(observed.correction).toMatchObject({ ok: false, recovery: { toolName: "text_measure", inputSchema: { required: ["text"] } } });
+    await expect(f.page.getByRole("article").getByText("已写入 result.md 并回读。", { exact: true })).toBeVisible();
+    await captureElectron(f.application, test.info().outputPath("child-file-parent-completed.png"));
+    await evidence("child-file-handoff", { simulatedModel: true, realElectron: true, realDocker: true, detail, observed, actual, runtime: snapshot.runs[0] });
+  }, (command, response) => {
+    const child = command.model === "controlled-computer-good";
+    const receipts = command.messages.filter(message => message.role === "tool" && typeof message.content === "string").map(message => JSON.parse((message.content as string).split("\n", 1)[0]!));
+    const latest = receipts.at(-1);
+    const call = (name: string, args: unknown): void => stream(response, { tool_calls: [{ index: 0, id: randomUUID(), type: "function", function: { name, arguments: JSON.stringify(args) } }] }, "tool_calls");
+    const execute = (operation: string, input?: unknown): void => call("product_execute", { operation, input });
+    if (!child) {
+      if (!receipts.length) execute("computer.tasks.start", { goal: "Create result.md and verify its full bytes, then deliver it." });
+      else if (latest.result?.task) {
+        observed.files = latest.fileEvidence.filter((file: { delivered: boolean }) => file.delivered);
+        call("product_describe", { operation: "text_measure" });
+      } else if (latest.ok === false) { observed.correction = latest; call("text_measure", { text: "正文" }); }
+      else stream(response, { content: "已写入 result.md 并回读。" });
+      return true;
+    }
+    const preparation = command.messages.find(message => typeof message.content === "string" && message.content.startsWith("Host preparation receipt ("))?.content;
+    if (typeof preparation !== "string") throw new Error("Missing desktop preparation");
+    const prepared = JSON.parse(preparation.slice(preparation.indexOf("{"), preparation.lastIndexOf("}") + 1));
+    if (!receipts.length) execute("computer.screenshot", { expectedEpoch: prepared.media.controlEpoch });
+    else if (latest.media) execute("execution.readFile", { path });
+    else if (latest.ok === false) { observed.missing = latest; execute("execution.writeFile", { path, content }); }
+    else if (latest.action) execute("execution.readFile", { path });
+    else if (latest.sha256) {
+      const file = latest.fileEvidence.findLast((file: { operation: string }) => file.operation === "execution.readFile");
+      const frame = receipts.findLast(receipt => receipt.media || receipt.feedback?.media);
+      execute("computer.task.finish", { status: "completed", summary: "Verified the saved file", observationId: (frame.media ?? frame.feedback.media).observationId, outputFiles: [{ stepId: file.stepId, path }] });
+    } else throw new Error("Unexpected computer receipt");
+    return true;
   });
 });
 

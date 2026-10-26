@@ -10,6 +10,17 @@ const MIME: Record<string, string> = { ".md": "text/markdown", ".txt": "text/pla
 type FileOperation = { action: "read" | "write" | "list" | "directory" | "initialize"; path?: string; content?: string; encoding?: "utf8" | "base64"; expectedSha256?: string };
 const digest = (bytes: Buffer): string => createHash("sha256").update(bytes).digest("hex");
 
+function fileFailure(error: unknown): WorkerError {
+  if (error instanceof WorkerError) return error;
+  const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+  if (code === "ENOENT") return new WorkerError("WORKER_FILE_NOT_FOUND", 404);
+  if (code === "EACCES" || code === "EPERM") return new WorkerError("WORKER_FILE_ACCESS_DENIED", 403);
+  if (code === "ELOOP" || code === "ENOTDIR") return new WorkerError("WORKER_PATH_INVALID");
+  if (code === "EEXIST") return new WorkerError("WORKER_FILE_CONFLICT", 409);
+  if (error instanceof SyntaxError) return new WorkerError("WORKER_INVALID_REQUEST");
+  return new WorkerError("WORKER_FILE_FAILED", 503);
+}
+
 function invalidPath(path: string, directory = false): boolean {
   return path.includes("\\") || /^[a-z]:/iu.test(path) || [...path].some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127) || isAbsolute(path) ||
     (path !== "." || !directory) && path.split("/").some(part => !part || part === "." || part === "..");
@@ -21,14 +32,12 @@ async function targetPath(root: string, path: string, directory = false, createP
   const offset = relative(root, target);
   if (offset === ".." || offset.startsWith(`..${sep}`) || isAbsolute(offset)) throw new WorkerError("WORKER_PATH_INVALID");
   const parent = directory ? target : dirname(target);
-  if (createParents) {
-    let current = root;
-    for (const segment of relative(root, parent).split(sep).filter(Boolean)) {
-      current = join(current, segment);
-      await mkdir(current, { mode: 0o2770 }).catch(error => { if (!(error && typeof error === "object" && "code" in error && error.code === "EEXIST")) throw error; });
-      const identity = await lstat(current);
-      if (!identity.isDirectory() || identity.isSymbolicLink() || await realpath(current) !== current) throw new WorkerError("WORKER_PATH_INVALID");
-    }
+  let current = root;
+  for (const segment of relative(root, parent).split(sep).filter(Boolean)) {
+    current = join(current, segment);
+    if (createParents) await mkdir(current, { mode: 0o2770 }).catch(error => { if (!(error && typeof error === "object" && "code" in error && error.code === "EEXIST")) throw error; });
+    const identity = await lstat(current);
+    if (!identity.isDirectory() || identity.isSymbolicLink() || await realpath(current) !== current) throw new WorkerError("WORKER_PATH_INVALID");
   }
   if (await realpath(parent) !== parent || (await lstat(parent)).isSymbolicLink()) throw new WorkerError("WORKER_PATH_INVALID");
   return target;
@@ -56,12 +65,13 @@ async function readBytes(target: string): Promise<Buffer> {
   } finally { await handle.close(); }
 }
 
-export async function fileOperation(workspace: string, input: FileOperation): Promise<EnvironmentFileContent | EnvironmentFileList | EnvironmentFileWriteResult | { path: string }> {
+async function performFileOperation(workspace: string, input: FileOperation): Promise<EnvironmentFileContent | EnvironmentFileList | EnvironmentFileWriteResult | { path: string }> {
+  const workspaceIdentity = await lstat(workspace);
+  if (!workspaceIdentity.isDirectory() || workspaceIdentity.isSymbolicLink()) throw new WorkerError("WORKER_PATH_INVALID");
   const root = await realpath(workspace);
-  if ((await lstat(workspace)).isSymbolicLink()) throw new WorkerError("WORKER_PATH_INVALID");
   if (input.action === "initialize") { await chmod(root, 0o2770); return { path: "." }; }
   const path = input.path ?? ".";
-  const target = await targetPath(root, path, input.action === "list" || input.action === "directory", input.action === "write");
+  const target = await targetPath(root, path, input.action === "list" || input.action === "directory", input.action === "write" && input.expectedSha256 === undefined);
   if (input.action === "directory") {
     const identity = await lstat(target);
     if (!identity.isDirectory() || identity.isSymbolicLink()) throw new WorkerError("WORKER_PATH_INVALID");
@@ -111,10 +121,12 @@ export async function fileOperation(workspace: string, input: FileOperation): Pr
     if (digest(await readBytes(target)) !== digest(bytes)) throw new WorkerError("WORKER_FILE_CHANGED", 409);
     await chmod(target, 0o660);
     return { path, size: bytes.length, sha256: digest(bytes) };
-  } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "EEXIST") throw new WorkerError("WORKER_FILE_CONFLICT", 409);
-    throw error;
   } finally { await handle.close().catch(() => undefined); await unlink(temporary).catch(() => undefined); }
+}
+
+export async function fileOperation(workspace: string, input: FileOperation): Promise<EnvironmentFileContent | EnvironmentFileList | EnvironmentFileWriteResult | { path: string }> {
+  try { return await performFileOperation(workspace, input); }
+  catch (error) { throw fileFailure(error); }
 }
 
 export async function fileHelperMain(): Promise<void> {
@@ -131,7 +143,7 @@ export async function fileHelperMain(): Promise<void> {
     const result = await fileOperation(process.env.AEVOREN_WORKSPACE_ROOT ?? "/workspace", input);
     process.stdout.write(JSON.stringify({ ok: true, result }));
   } catch (error) {
-    const known = error instanceof WorkerError;
-    process.stdout.write(JSON.stringify({ ok: false, error: { code: known ? error.code : "WORKER_FILE_ACCESS_DENIED", status: known ? error.status : 403 } }));
+    const failure = fileFailure(error);
+    process.stdout.write(JSON.stringify({ ok: false, error: { code: failure.code, status: failure.status } }));
   }
 }

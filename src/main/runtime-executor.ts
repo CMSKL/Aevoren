@@ -1,3 +1,5 @@
+import { computerFileEvidence, currentPathRead, filePathEvidence, readBackProves, runFileEvidence } from "./computer-file-evidence";
+import type { ComputerFileEvidence } from "@shared/computer-task-contracts";
 import type {
   AppError,
   Bot,
@@ -21,6 +23,7 @@ import { asAppError, AevorenBotError } from "./errors";
 import type { AppRepository } from "./database";
 import {
   FakeModelProvider,
+  structuredModelToolDefinitions,
   selectDeterministicRoomOwner,
   isDirectLeadConversationRequest,
   type ChatMessage,
@@ -161,6 +164,15 @@ const CONTENT_TEAM_ROLES = new Set(["情报侦察员", "选题策划师", "内�
 function claimsWorkspaceRead(body: string): boolean {
   body = positiveToolRequestText(body);
   return /(?:已|已经|成功|完成|真实).{0,16}(?:读取|打开|解析).{0,32}(?:文件|CSV|工作区)|(?:文件|CSV).{0,16}(?:已读取|读取成功)|(?:workspace_read).{0,20}(?:成功|完成|已调用)|\b(?:file|csv|draft|brief|profile)\s+(?:was\s+)?read\b|\b(?:loaded|parsed)\s+(?:the\s+)?(?:file|csv)\b/iu.test(body);
+}
+
+const FILE_READ_OPERATIONS = ["documents.read", "skills.read", "skills.load", "skills.readFile", "library.read", "library.readFile", "execution.readFile"];
+const FILE_WRITE_OPERATIONS = ["documents.create", "documents.update", "skills.create", "skills.update", "library.create", "library.importText", "library.update", "execution.writeFile"];
+
+function completedProductOperation(tool: ToolInvocation, operations: readonly string[]): boolean {
+  return tool.arguments.kind === "product-call" && tool.arguments.action === "execute" &&
+    operations.includes(tool.arguments.operation) && tool.resultMetadata?.operation === tool.arguments.operation &&
+    tool.resultMetadata.status === "completed";
 }
 
 function claimsRemoteEvidence(body: string): boolean {
@@ -308,7 +320,7 @@ function containsMeasurementConclusion(body: string): boolean {
   return /\d+\s*(?:个)?(?:非空白字符|字符|字|词|bytes?|行)|(?:字符数|字数|非空白字符|长度|word count|character count).{0,24}\d/iu.test(body);
 }
 
-function measurementEvidence(body: string, succeeded: ToolInvocation[]): { text: boolean; metadataMissing: boolean } {
+function measurementEvidence(body: string, succeeded: ToolInvocation[], computerFiles: ComputerFileEvidence[] = []): { text: boolean; metadataMissing: boolean } {
   let metadataMissing = false;
   const reads = succeeded.filter(tool => tool.arguments.kind === "product-call" && tool.arguments.action === "execute" &&
     /^(?:(?:documents|skills|library)\.(?:read|load|readFile)|execution\.readFile)$/u.test(tool.arguments.operation ?? "") &&
@@ -372,6 +384,9 @@ function measurementEvidence(body: string, succeeded: ToolInvocation[]): { text:
         const actual = metric === "bytes" ? workspaceFile ? meta.bytes : meta.measurementBytes
           : meta.csvRowCount;
         return actual === value;
+      }) || metric === "bytes" && computerFiles.some(file => {
+        const escaped = file.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return file.bytes === value && new RegExp(`(?:^|[^\\p{L}\\p{N}_./-])${escaped}(?=$|[^\\p{L}\\p{N}_./-])`, "u").test(clause);
       });
       if (!verified) metadataMissing = true;
       return "";
@@ -1159,7 +1174,8 @@ export class RuntimeExecutor {
             if (active.controller.signal.aborted) throw error;
             const failed = asAppError(error);
             if (event.tool.kind === "product-call") {
-              outcome = { toolCallId: event.toolCallId, tool: event.tool, content: JSON.stringify({ ok: false, code: failed.code, safeMessage: `${failed.safeMessage} 请通过 product_describe 查询精确参数或查询实际状态后处理；这次失败不能算执行成功。` }) };
+              outcome = { toolCallId: event.toolCallId, tool: event.tool, content: JSON.stringify({ ok: false, code: failed.code,
+                safeMessage: `${failed.safeMessage} 请通过 product_describe 查询精确参数或查询实际状态后处理；这次失败不能算执行成功。` }) };
             } else {
               if (!event.toolSignal || !event.respond) throw error;
               await event.respond(JSON.stringify({ ok: false, code: failed.code, safeMessage: failed.safeMessage }));
@@ -1173,6 +1189,13 @@ export class RuntimeExecutor {
             throw blocked;
           }
           let providerOutcomeContent = outcome.content;
+          if (event.tool.kind === "product-call" && event.tool.action !== "catalog" && !toolOutcomeSucceeded(outcome.content)) {
+            const operation = event.tool.operation;
+            const directTool = structuredModelToolDefinitions(active.providerContext).find(definition => definition.name === operation);
+            if (directTool) providerOutcomeContent = JSON.stringify({ ...JSON.parse(outcome.content),
+              safeMessage: `${operation} 是独立工具，请直接按 inputSchema 调用，不能用 product_describe/product_execute 包装。已保存的结果保留，无需重放成功写入。`,
+              recovery: { toolName: directTool.name, inputSchema: directTool.inputSchema } });
+          }
           if (event.type === "computation-tool" && event.tool.kind === "text-measure" && active.requiredMeasurementRanges.length > 0) {
             const measuredValues = this.repository.listToolInvocations(active.sessionId)
               .filter((invocation) => invocation.runtimeRunId === active.runId && invocation.toolKind === "text-measure" && invocation.state === "succeeded")
@@ -1441,7 +1464,12 @@ export class RuntimeExecutor {
     }
     if (active.turnPurpose !== "work") {
       const evidence = active.providerContext.roomRunSummary?.results.flatMap((result) => result.tools ?? []) ?? [];
-      const hasKind = (...kinds: string[]): boolean => evidence.some((tool) => kinds.includes(tool.kind));
+      const computerFiles = active.providerContext.roomRunSummary?.results.flatMap(result => result.computerFiles ?? []) ?? [];
+      const hasKind = (...kinds: string[]): boolean => computerFiles.some(file => kinds.includes("workspace-read") && file.operation === "execution.readFile" || kinds.includes("workspace-write") && (file.operation === "execution.writeFile" || file.delivered)) || evidence.some((tool) => kinds.includes(tool.kind) ||
+        tool.status === "completed" && typeof tool.operation === "string" && (
+          kinds.includes("workspace-read") && FILE_READ_OPERATIONS.includes(tool.operation) ||
+          kinds.includes("workspace-write") && FILE_WRITE_OPERATIONS.includes(tool.operation)
+        ));
       if (active.turnPurpose === "summary" && !active.body.trim()) throw new AevorenBotError("MODEL_STREAM_INVALID");
       if (active.turnPurpose === "summary" && active.summaryMissingRequirements.length > 0 &&
         /(?:全部|所有)(?:的)?(?:任务|工作)(?:都|均)?(?:已|已经)完成|\ball\s+(?:requested\s+)?(?:tasks|work)\s+(?:are\s+|is\s+)?(?:completed|complete|done)\b/iu.test(active.body) &&
@@ -1462,13 +1490,17 @@ export class RuntimeExecutor {
     }
     const succeeded = this.repository.listToolInvocations(active.sessionId)
       .filter((invocation) => invocation.runtimeRunId === active.runId && invocation.state === "succeeded");
+    const computerFiles = computerFileEvidence(this.repository, active.runId);
     const hasKind = (...kinds: Array<(typeof succeeded)[number]["toolKind"]>): boolean =>
+      computerFiles.some(file => kinds.includes("workspace-read") && file.operation === "execution.readFile" || kinds.includes("workspace-write") && (file.operation === "execution.writeFile" || file.delivered)) ||
       succeeded.some((invocation) => kinds.includes(invocation.toolKind) || (
         invocation.arguments.kind === "product-call" && invocation.arguments.action === "execute" &&
         invocation.resultMetadata?.status !== "cancelled" && invocation.resultMetadata?.status !== "waiting_user" && (
           kinds.includes("bot-create") && ["bots.create", "bots.duplicate", "teams.createContentTeam"].includes(invocation.arguments.operation) ||
           kinds.includes("room-create") && ["rooms.create", "teams.createContentTeam"].includes(invocation.arguments.operation) ||
-          kinds.includes("workspace-write") && invocation.arguments.operation === "artifacts.save"
+          kinds.includes("workspace-write") && invocation.arguments.operation === "artifacts.save" ||
+          kinds.includes("workspace-read") && completedProductOperation(invocation, FILE_READ_OPERATIONS) ||
+          kinds.includes("workspace-write") && completedProductOperation(invocation, FILE_WRITE_OPERATIONS)
         )
       ));
     const explicitRequirements = requiresToolCall(active.evidenceRequestText) ? requiredToolNames(active.evidenceRequestText) : [];
@@ -1477,10 +1509,20 @@ export class RuntimeExecutor {
       const kind = requiredKinds[name];
       if (kind && !hasKind(kind)) throw new AevorenBotError("TASK_REQUIREMENTS_UNMET", undefined, true, { requirement: name });
     }
+    const isolatedFiles = runFileEvidence(this.repository, active.runId, succeeded);
     for (const path of active.providerContext.requestedWritePaths ?? []) {
       const written = succeeded.find(tool => tool.toolKind === "workspace-write" && tool.targetPath === path);
-      if (!written) throw new AevorenBotError("TASK_REQUIREMENTS_UNMET", undefined, true, { requirement: "requested-artifact-path" });
-      if (/保存后.{0,16}读取|回读|read.{0,12}back/iu.test(active.evidenceRequestText) && !succeeded.some(tool => tool.toolKind === "workspace-read" && tool.targetPath === path && tool.workspaceId === written.workspaceId && tool.resultMetadata?.sha256 === written.resultMetadata?.sha256 && tool.resultMetadata?.truncated === false)) {
+      if (written) {
+        const readBack = succeeded.some(tool => tool.toolKind === "workspace-read" && tool.targetPath === path &&
+          tool.workspaceId === written.workspaceId && tool.resultMetadata?.sha256 === written.resultMetadata?.sha256 && tool.resultMetadata?.truncated === false);
+        if (/保存后.{0,16}读取|回读|read.{0,12}back/iu.test(active.evidenceRequestText) && !readBack) {
+          throw new AevorenBotError("TASK_REQUIREMENTS_UNMET", undefined, true, { requirement: "artifact-readback" });
+        }
+        continue;
+      }
+      const { write, deliveredRead } = filePathEvidence(isolatedFiles, path);
+      if (!write && !deliveredRead) throw new AevorenBotError("TASK_REQUIREMENTS_UNMET", undefined, true, { requirement: "requested-artifact-path" });
+      if (/保存后.{0,16}读取|回读|read.{0,12}back/iu.test(active.evidenceRequestText) && !readBackProves(isolatedFiles, path)) {
         throw new AevorenBotError("TASK_REQUIREMENTS_UNMET", undefined, true, { requirement: "artifact-readback" });
       }
     }
@@ -1510,12 +1552,12 @@ export class RuntimeExecutor {
     ) {
       throw new AevorenBotError("DATA_EVIDENCE_REQUIRED", undefined, true, { requirement: "workspace-read-csv" });
     }
-    const measurements = measurementEvidence(active.body, succeeded);
+    const measurements = measurementEvidence(active.body, succeeded, computerFiles);
     if (measurements.metadataMissing) throw new AevorenBotError("TOOL_EVIDENCE_REQUIRED", undefined, true, { requirement: "resource-measurement" });
     if (active.providerContext.textMeasureTools && measurements.text && !hasKind("text-measure")) {
       throw new AevorenBotError("MEASUREMENT_EVIDENCE_REQUIRED", undefined, true, { requirement: "text-measure" });
     }
-    if (active.providerContext.requireToolCall && succeeded.length === 0 && !explicitlyUnable) {
+    if (active.providerContext.requireToolCall && succeeded.length === 0 && computerFiles.length === 0 && !explicitlyUnable) {
       throw new AevorenBotError("TOOL_EVIDENCE_REQUIRED", undefined, true, { requirement: "successful-tool-call" });
     }
   }
@@ -1523,7 +1565,18 @@ export class RuntimeExecutor {
   private missingTeamRequirements(sessionId: string, summary: RoomRunSummary): string[] {
     const text = summary.request.text;
     const evidence = summary.results.flatMap((result) => result.tools ?? []);
-    const hasKind = (kind: string): boolean => evidence.some((tool) => tool.kind === kind);
+    const sourceRuns = new Set(summary.results.flatMap((result) => {
+      const turn = this.repository.getRoomTurn(result.turnId);
+      return turn.runtimeRunId ? [turn.runtimeRunId] : [];
+    }));
+    const verifiedDigests = new Set(evidence.map((tool) => tool.resultDigest));
+    const succeeded = this.repository.listToolInvocations(sessionId).filter(tool =>
+      sourceRuns.has(tool.runtimeRunId) && tool.state === "succeeded" && tool.resultDigest !== null && verifiedDigests.has(tool.resultDigest));
+    const computerFiles = [...sourceRuns].flatMap(id => computerFileEvidence(this.repository, id));
+    const isolatedFiles = [...sourceRuns].flatMap(id => runFileEvidence(this.repository, id));
+    const hasKind = (kind: string): boolean => computerFiles.some(file => kind === "workspace-read" && file.operation === "execution.readFile" || kind === "workspace-write" && (file.operation === "execution.writeFile" || file.delivered)) || evidence.some((tool) => tool.kind === kind) || succeeded.some(tool =>
+      kind === "workspace-read" && completedProductOperation(tool, FILE_READ_OPERATIONS) ||
+      kind === "workspace-write" && completedProductOperation(tool, FILE_WRITE_OPERATIONS));
     const kinds: Record<string, { kind: string; label: string }> = {
       web_search: { kind: "web-search", label: "公开资料检索" },
       web_fetch: { kind: "web-fetch", label: "网页读取" },
@@ -1536,24 +1589,18 @@ export class RuntimeExecutor {
       if (kinds[name] && !hasKind(kinds[name].kind)) missing.push(`尚未完成原任务要求的${kinds[name].label}。`);
     }
     const artifacts = summary.results.flatMap((result) => result.artifacts);
-    const sourceRuns = new Set(summary.results.flatMap((result) => {
-      const turn = this.repository.getRoomTurn(result.turnId);
-      return turn.runtimeRunId ? [turn.runtimeRunId] : [];
-    }));
-    const verifiedDigests = new Set(evidence.map((tool) => tool.resultDigest));
-    const reads = this.repository.listToolInvocations(sessionId).filter((tool) => (
-      sourceRuns.has(tool.runtimeRunId) && tool.toolKind === "workspace-read" && tool.state === "succeeded" &&
-      tool.resultDigest !== null && verifiedDigests.has(tool.resultDigest)
-    ));
+    const reads = succeeded.filter(tool => tool.toolKind === "workspace-read");
     for (const path of requestedReadPaths(text)) {
       const artifact = artifacts.find((candidate) => candidate.path === path);
       if (!reads.some((read) => read.targetPath === path && (!artifact ||
-        read.workspaceId === artifact.workspaceId && read.resultMetadata?.truncated === false && read.resultMetadata.sha256 === artifact.sha256))) {
+        read.workspaceId === artifact.workspaceId && read.resultMetadata?.truncated === false && read.resultMetadata.sha256 === artifact.sha256)) &&
+        !(!artifact && currentPathRead(isolatedFiles, path))) {
         missing.push(`尚未完成来源文件 ${path} 的有效读取。`);
       }
     }
     for (const path of requestedWritePaths(text)) {
-      if (!artifacts.some((artifact) => artifact.path === path)) missing.push(`尚未生成要求的成果文件 ${path}。`);
+      const { write, deliveredRead } = filePathEvidence(isolatedFiles, path);
+      if (!artifacts.some((artifact) => artifact.path === path) && !write && !deliveredRead) missing.push(`尚未生成要求的成果文件 ${path}。`);
     }
     if (requiresToolCall(text) && evidence.length === 0) missing.push("原任务要求的实际操作尚未完成。");
     return missing;
@@ -1591,12 +1638,14 @@ export class RuntimeExecutor {
       ...specific.map(({ path, workspaceId, sha256 }) => ({ path, workspaceId, sha256 })),
     ];
     const reads = this.repository.listToolInvocations(active.sessionId).filter((tool) =>
-      tool.runtimeRunId === active.runId && tool.toolKind === "workspace-read" && tool.state === "succeeded",
+      tool.runtimeRunId === active.runId && tool.state === "succeeded",
     );
+    const isolatedFiles = runFileEvidence(this.repository, active.runId);
     return [...new Map(required.map((source) => [`${"workspaceId" in source ? source.workspaceId : ""}:${source.path}`, source])).values()]
-      .filter((source) => !reads.some((read) => read.targetPath === source.path &&
+      .filter((source) => !reads.some((read) => read.toolKind === "workspace-read" && read.targetPath === source.path &&
         (!("workspaceId" in source) || read.workspaceId === source.workspaceId) &&
-        (!("sha256" in source) || read.resultMetadata?.truncated === false && read.resultMetadata.sha256 === source.sha256)));
+        (!("sha256" in source) || read.resultMetadata?.truncated === false && read.resultMetadata.sha256 === source.sha256)) &&
+        !(!("workspaceId" in source) && !("sha256" in source) && currentPathRead(isolatedFiles, source.path)));
   }
 
   private validateCsvReport(active: ActiveRun, content: string):

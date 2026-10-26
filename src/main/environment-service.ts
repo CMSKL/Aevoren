@@ -34,6 +34,25 @@ function failure(error: unknown): AevorenBotError {
   return new AevorenBotError("ENVIRONMENT_UNAVAILABLE");
 }
 
+/** File failures are classified by protocol code, never by command HTTP status. */
+function fileFailure(error: unknown): AevorenBotError {
+  if (error instanceof AevorenBotError) return error;
+  if (error instanceof z.ZodError) return new AevorenBotError("ENVIRONMENT_FILE_INVALID");
+  if (error instanceof ExecutionWorkerError) {
+    switch (error.code) {
+      case "WORKER_FILE_NOT_FOUND": return new AevorenBotError("ENVIRONMENT_FILE_NOT_FOUND");
+      case "WORKER_FILE_ACCESS_DENIED": return new AevorenBotError("ENVIRONMENT_FILE_ACCESS_DENIED");
+      case "WORKER_FILE_CONFLICT":
+      case "WORKER_FILE_CHANGED": return new AevorenBotError("ENVIRONMENT_FILE_CONFLICT");
+      case "WORKER_PATH_INVALID":
+      case "WORKER_INVALID_REQUEST": return new AevorenBotError("ENVIRONMENT_FILE_INVALID");
+      case "WORKER_FILE_TOO_LARGE":
+      case "WORKER_REQUEST_TOO_LARGE": return new AevorenBotError("ENVIRONMENT_FILE_TOO_LARGE");
+    }
+  }
+  return new AevorenBotError("ENVIRONMENT_UNAVAILABLE", "环境文件服务暂时不可用，请检查环境状态并核对实际文件；不会自动重试写入。", false);
+}
+
 /** Shares one host-owned business service between IPC and Runtime operations. */
 export class EnvironmentService {
   private readonly locks = new Map<string, Promise<unknown>>();
@@ -521,31 +540,39 @@ export class EnvironmentService {
   async listFiles(input: EnvironmentScope & { path?: string }): Promise<EnvironmentFileList> {
     const scope = environmentScopeSchema.parse({ sessionId: input.sessionId, executorBotId: input.executorBotId });
     const path = environmentDirectoryPathSchema.parse(input.path ?? ".");
-    const client = await this.client(scope);
-    const result = await client.request<EnvironmentFileList>(`/v1/files?path=${encodeURIComponent(path)}`);
-    if (result.path !== path || !Array.isArray(result.entries) || typeof result.truncated !== "boolean") throw new AevorenBotError("ENVIRONMENT_FILE_INVALID");
-    this.repository.get(scope);
-    return { ...result, entries: result.entries.map(entry => environmentFileSchema.parse(entry)) };
+    try {
+      const client = await this.client(scope);
+      const result = await client.request<EnvironmentFileList>(`/v1/files?path=${encodeURIComponent(path)}`);
+      if (result.path !== path || !Array.isArray(result.entries) || typeof result.truncated !== "boolean") throw new AevorenBotError("ENVIRONMENT_FILE_INVALID");
+      this.repository.get(scope);
+      return { ...result, entries: result.entries.map(entry => environmentFileSchema.parse(entry)) };
+    } catch (error) { throw fileFailure(error); }
   }
 
   async readFile(input: EnvironmentFileReadInput): Promise<EnvironmentFileContent> {
-    const parsed = environmentFileReadSchema.parse(input), client = await this.client(parsed);
-    const result = environmentFileContentSchema.parse(await client.request(`/v1/files/content?path=${encodeURIComponent(parsed.path)}`));
-    const bytes = Buffer.from(result.content, result.encoding === "base64" ? "base64" : "utf8");
-    if (result.path !== parsed.path || bytes.length !== result.size || createHash("sha256").update(bytes).digest("hex") !== result.sha256) throw new AevorenBotError("ENVIRONMENT_FILE_INVALID");
-    this.repository.get(parsed);
-    return result;
+    const parsed = environmentFileReadSchema.parse(input);
+    try {
+      const client = await this.client(parsed);
+      const result = environmentFileContentSchema.parse(await client.request(`/v1/files/content?path=${encodeURIComponent(parsed.path)}`));
+      const bytes = Buffer.from(result.content, result.encoding === "base64" ? "base64" : "utf8");
+      if (result.path !== parsed.path || bytes.length !== result.size || createHash("sha256").update(bytes).digest("hex") !== result.sha256) throw new AevorenBotError("ENVIRONMENT_FILE_INVALID");
+      this.repository.get(parsed);
+      return result;
+    } catch (error) { throw fileFailure(error); }
   }
 
   async writeFile(input: EnvironmentFileWriteInput, signal?: AbortSignal): Promise<EnvironmentFileWriteResult> {
-    const parsed = environmentFileWriteSchema.parse(input), client = await this.client(parsed);
-    const bytes = Buffer.from(parsed.content, parsed.encoding === "base64" ? "base64" : "utf8"), digest = createHash("sha256").update(bytes).digest("hex");
-    const result = await client.request<EnvironmentFileWriteResult>(`/v1/files/content?path=${encodeURIComponent(parsed.path)}`, "PUT", {
-      path: parsed.path, content: parsed.content, encoding: parsed.encoding ?? "utf8", ...(parsed.expectedSha256 ? { expectedSha256: parsed.expectedSha256 } : {}),
-    }, signal);
-    if (result.path !== parsed.path || result.sha256 !== digest || result.size !== bytes.length) throw new AevorenBotError("ENVIRONMENT_FILE_INVALID");
-    this.repository.get(parsed); signal?.throwIfAborted();
-    return result;
+    const parsed = environmentFileWriteSchema.parse(input);
+    try {
+      const client = await this.client(parsed);
+      const bytes = Buffer.from(parsed.content, parsed.encoding === "base64" ? "base64" : "utf8"), digest = createHash("sha256").update(bytes).digest("hex");
+      const result = await client.request<EnvironmentFileWriteResult>(`/v1/files/content?path=${encodeURIComponent(parsed.path)}`, "PUT", {
+        path: parsed.path, content: parsed.content, encoding: parsed.encoding ?? "utf8", ...(parsed.expectedSha256 ? { expectedSha256: parsed.expectedSha256 } : {}),
+      }, signal);
+      if (result.path !== parsed.path || result.sha256 !== digest || result.size !== bytes.length) throw new AevorenBotError("ENVIRONMENT_FILE_INVALID");
+      this.repository.get(parsed); signal?.throwIfAborted();
+      return result;
+    } catch (error) { signal?.throwIfAborted(); throw fileFailure(error); }
   }
 
   async registerPort(input: RegisterPortInput, signal?: AbortSignal): Promise<RegisteredPort> {

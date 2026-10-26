@@ -538,6 +538,50 @@ describe("fixed lead room repository", () => {
     expect(f.value.listRoomTurns(f.run.id)).toHaveLength(1);
   });
 
+  it("keeps successful product operation identity after a member reply fails, without leaking its arguments", () => {
+    const f = fixture();
+    const worker = f.value.createLeadAssignments(f.run.id, f.source.id, [plan(f)[0]!])[0]!;
+    complete(f.value, f.source);
+    accept(f.value, worker);
+    const active = runtime(f.value, worker);
+    const tool = f.value.prepareToolInvocation({ runtimeRunId: active.run.id, toolCallId: randomUUID(), idempotencyKey: randomUUID(),
+      tool: { kind: "product-call", action: "execute", operation: "documents.create", input: { name: "Research", body: "private-body-not-for-summary" } } });
+    f.value.resolveToolApproval(tool.approval.id, tool.approval.version, "allow-once");
+    f.value.transitionToolInvocation(tool.invocation.id, "dispatching");
+    f.value.transitionToolInvocation(tool.invocation.id, "running");
+    const content = JSON.stringify({ ok: true, status: "completed", operation: "documents.create" });
+    const digest = createHash("sha256").update(content).digest("hex");
+    f.value.completeProductToolInvocation(tool.invocation.id, digest, content, { operation: "documents.create", status: "completed" });
+    f.value.updateTranscriptEntry(active.assistant.id, "untrusted failed reply", "failed");
+    f.value.transitionRuntimeRun(active.run.id, "failed", { errorCode: "TOOL_EVIDENCE_REQUIRED" });
+    f.value.transitionRoomTurn(worker.id, "failed", { errorCode: "TOOL_EVIDENCE_REQUIRED" });
+    const summary = f.value.getRoomRunSummary(f.run.id);
+    expect(summary.results[1]).toMatchObject({ state: "failed", body: "", assistantEntryId: null,
+      tools: [{ kind: "product-call", operation: "documents.create", status: "completed", resultDigest: digest }] });
+    expect(JSON.stringify(summary)).not.toContain("private-body-not-for-summary");
+    expect(JSON.stringify(summary)).not.toContain("untrusted failed reply");
+  });
+
+  it("projects verified child files from a failed member and drops them after an environment restart", () => {
+    const f = fixture(), worker = f.value.createLeadAssignments(f.run.id, f.source.id, plan(f).slice(0, 1))[0]!;
+    complete(f.value, f.source); accept(f.value, worker);
+    const active = runtime(f.value, worker), scope = { sessionId: f.detail.session.id, executorBotId: worker.agentId };
+    const environment = f.value.environments.ensure(scope, { workerVersion: "1.3.0", imageRef: "fixture", imageDigest: `sha256:${"a".repeat(64)}`, platform: "linux/arm64" });
+    const bootId = randomUUID(); f.value.environments.update(scope, environment.version, { bootId });
+    const task = f.value.computerTasks.create({ ...scope, goal: "Deliver cover", clientNonce: randomUUID() }, active.run.id, f.value.getDefaultModelSelection(), 1).task;
+    const path = "visual/cover.png", content = "verified bytes", sha256 = createHash("sha256").update(content).digest("hex");
+    const step = f.value.computerTasks.beginStep(task, "execution.readFile", { path });
+    f.value.computerTasks.finishStep(task, { ...step, fileEvidence: { parentRunId: active.run.id, environmentId: environment.id, bootId, imageDigest: environment.imageDigest } }, "completed", { path, content, encoding: "utf8", size: Buffer.byteLength(content), sha256 });
+    f.value.computerTasks.update(task, task.version, { state: "completed", outputFiles: [{ stepId: step.id, path }] });
+    f.value.transitionRuntimeRun(active.run.id, "failed", { errorCode: "MODEL_FAILED" });
+    f.value.transitionRoomTurn(worker.id, "failed", { errorCode: "MODEL_FAILED" });
+    expect(f.value.getRoomRunSummary(f.run.id).results[1]).toMatchObject({ state: "failed", errorCode: "MODEL_FAILED", body: "",
+      computerFiles: [{ taskId: task.id, stepId: step.id, path, sha256, delivered: true }] });
+    const current = f.value.environments.getInternal(scope)!;
+    f.value.environments.update(scope, current.version, { bootId: randomUUID() });
+    expect(f.value.getRoomRunSummary(f.run.id).results[1]?.computerFiles).toEqual([]);
+  });
+
   it.each([false, true])("includes successful artifacts from failed=%s runtimes and suppresses revoked evidence", (failed) => {
     const value = repository();
     const directory = realpathSync(mkdtempSync(join(tmpdir(), "aevoren-lead-summary-")));

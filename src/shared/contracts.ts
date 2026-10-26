@@ -862,7 +862,8 @@ export type RoomRunSummary = {
     outcome: AgentTurnOutcome | null;
     body: string;
     assistantEntryId: string | null;
-    tools?: Array<{ kind: ToolRequest["kind"]; resultDigest: string }>;
+    tools?: Array<{ kind: ToolRequest["kind"]; resultDigest: string; operation?: string; status?: string }>;
+    computerFiles?: import("./computer-task-contracts").ComputerFileEvidence[];
     artifacts: Array<{
       invocationId: string;
       sourceRuntimeRunId: string;
