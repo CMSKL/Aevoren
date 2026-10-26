@@ -316,7 +316,7 @@ describe("AppRepository", () => {
     const repository = new AppRepository(filename);
     repositories.push(repository);
 
-    expect(repository.listProviderInstanceConfigs()).toHaveLength(12);
+    expect(repository.listProviderInstanceConfigs()).toHaveLength(11);
     expect(repository.getProviderInstanceConfig("codex.default")).toMatchObject({
       driverKind: "codex-cli",
       config: { cliPath: "/custom/codex" },
@@ -363,6 +363,32 @@ describe("AppRepository", () => {
       providerInstanceId: "gemini.default",
       providerModelId: "gemini-2.5-pro",
     });
+  });
+
+  it("prunes acp-cli instances whose adapter no longer has a spec", () => {
+    const directory = mkdtempSync(join(tmpdir(), "aevoren-provider-prune-"));
+    temporaryDirectories.push(directory);
+    const filename = join(directory, "app.sqlite");
+    createDatabaseAtVersion(filename, 48);
+    const before = new DatabaseSync(filename);
+    before.prepare(
+      "INSERT INTO provider_instances(id, driver_kind, display_name, config_json, enabled, version, created_at, updated_at) VALUES (?, 'acp-cli', ?, ?, 1, 1, ?, ?)",
+    ).run(
+      "legacy.default",
+      "Legacy CLI",
+      JSON.stringify({ adapter: "legacy", cliPath: "legacy" }),
+      "2026-09-16T00:00:00.000Z",
+      "2026-09-16T00:00:00.000Z",
+    );
+    before.close();
+
+    const repository = new AppRepository(filename);
+    repositories.push(repository);
+
+    const ids = repository.listProviderInstanceConfigs().map((configuration) => configuration.id);
+    expect(ids).not.toContain("legacy.default");
+    expect(ids).toContain("droid.default");
+    expect(ids).toContain("gemini.default");
   });
 
   it("creates a neutral neutral default bot with one MAIN session", () => {

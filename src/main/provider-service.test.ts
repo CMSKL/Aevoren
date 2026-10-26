@@ -531,8 +531,8 @@ describe("ACP CLI Provider", () => {
 
   it("fails before prompting when an ACP CLI does not confirm the selected model", async () => {
     vi.stubEnv("FAKE_ACP_MODEL_MISMATCH", "1");
-    const spec = acpSpec("grok")!;
-    const provider = new AcpCliProvider(fixtureAcpCli, "grok-4.6", spec, join(providerWorkspace(), "acp-model-mismatch"));
+    const spec = acpSpec("droid")!;
+    const provider = new AcpCliProvider(fixtureAcpCli, "claude-sonnet-5-20260301", spec, join(providerWorkspace(), "acp-model-mismatch"));
     const consume = async (): Promise<void> => {
       for await (const event of provider.run([
         { role: "user", content: "Must not be sent" },

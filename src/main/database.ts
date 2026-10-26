@@ -1088,7 +1088,6 @@ export const MIGRATIONS = [
 
       INSERT INTO provider_instances(id, driver_kind, display_name, config_json, enabled, version, created_at, updated_at)
       VALUES
-        ('grok.default', 'acp-cli', 'Grok Build', json_object('adapter', 'grok', 'cliPath', 'grok'), 1, 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
         ('kimi.default', 'acp-cli', 'Kimi Code', json_object('adapter', 'kimi', 'cliPath', 'kimi'), 1, 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
         ('droid.default', 'acp-cli', 'Factory Droid', json_object('adapter', 'droid', 'cliPath', 'droid'), 1, 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
         ('cursor.default', 'acp-cli', 'Cursor Agent', json_object('adapter', 'cursor', 'cliPath', 'cursor-agent'), 1, 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
@@ -2093,6 +2092,8 @@ export const MIGRATIONS = [
   { version: 46, sql: "" },
   { version: 47, sql: "" },
   COMPUTER_TASK_COMPATIBILITY_MIGRATION,
+  // An acp-cli instance must reference an adapter that still has a spec. Prune rows whose adapter spec was removed.
+  { version: 49, sql: "DELETE FROM provider_instances WHERE driver_kind = 'acp-cli' AND json_extract(config_json, '$.adapter') NOT IN ('kimi','droid','cursor','opencode','qwen','hermes','gemini');" },
 ] as const;
 
 type ConversationSidebarRow = {

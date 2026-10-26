@@ -21,15 +21,6 @@ export type AcpCliSpec = {
 
 export const ACP_CLI_SPECS: AcpCliSpec[] = [
   {
-    id: "grok",
-    displayName: "Grok Build",
-    defaultCommand: "grok",
-    access: "cloud",
-    models: { default: "grok-4.6", options: [{ id: "grok-4.6", label: "Grok 4.6" }, { id: "grok-4.5", label: "Grok 4.5" }] },
-    spawnArgs: (model) => ["--permission-mode", "default", "agent", ...(model ? ["-m", model] : []), "stdio"],
-    selectModel: { method: "session/set_model" },
-  },
-  {
     id: "kimi",
     displayName: "Kimi Code",
     defaultCommand: "kimi",
@@ -60,7 +51,6 @@ export const ACP_CLI_SPECS: AcpCliSpec[] = [
         { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro" },
         { id: "glm-5.2", label: "GLM 5.2" },
         { id: "kimi-k3", label: "Kimi K3" },
-        { id: "grok-4.6", label: "Grok 4.6" },
       ],
     },
     allowedEnvironment: ["FACTORY_API_KEY"],

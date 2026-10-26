@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
 import { expect, it } from "vitest";
 import { AppRepository, MIGRATIONS } from "./database";
+import { ACP_CLI_SPECS } from "./providers/acp-cli";
 
 // Opt-in: SQLite's online backup reads the running installation without touching
 // its profile. Only the isolated copy is migrated; private row contents never log.
@@ -21,7 +22,8 @@ it.skipIf(!process.env.AEVOREN_REAL_MIGRATION_DB)("preserves real installed data
     db = new DatabaseSync(copy, { readOnly: true });
     const originalVersion = Number((db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number }).version);
     const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> 'schema_migrations' ORDER BY name").all() as Array<{ name: string }>);
-    const fingerprints = tables.map(({ name }) => {
+    const providerRows = db.prepare("SELECT * FROM provider_instances ORDER BY id").all() as Array<Record<string, unknown>>;
+    const fingerprints = tables.filter(({ name }) => name !== "provider_instances").map(({ name }) => {
       const columns = (db!.prepare(`PRAGMA table_info(${quote(name)})`).all() as Array<{ name: string }>).map(row => row.name);
       return { name, columns, fingerprint: fingerprint(db!, name, columns) };
     });
@@ -33,6 +35,20 @@ it.skipIf(!process.env.AEVOREN_REAL_MIGRATION_DB)("preserves real installed data
     repository.close(); repository = undefined;
     db = new DatabaseSync(copy, { readOnly: true });
     for (const table of fingerprints) expect(fingerprint(db, table.name, table.columns), `preserve ${table.name}`).toEqual(table.fingerprint);
+    // provider_instances is not fingerprinted: a migration may prune an acp-cli row whose adapter spec was removed.
+    // Every surviving row must be byte-identical, and only such pruned rows may disappear.
+    const surviving = new Map((db.prepare("SELECT * FROM provider_instances ORDER BY id").all() as Array<Record<string, unknown>>).map(row => [String(row.id), row]));
+    const knownAdapters = new Set(ACP_CLI_SPECS.map(spec => spec.id));
+    for (const row of providerRows) {
+      const id = String(row.id);
+      const kept = surviving.get(id);
+      if (kept) {
+        expect(kept, `preserve provider ${id}`).toEqual(row);
+        continue;
+      }
+      const adapter = String((JSON.parse(String(row.config_json)) as { adapter?: unknown }).adapter ?? "");
+      expect(row.driver_kind === "acp-cli" && !knownAdapters.has(adapter), `provider ${id} may only disappear when its adapter spec was removed`).toBe(true);
+    }
     expect(db.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
     expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     db.close(); db = undefined;
